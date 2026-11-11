@@ -1,12 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using NutriTrack.Api.Data;
 using Scalar.AspNetCore;
+using NutriTrack.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<NutriDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddHttpClient<INutritionAiService, NutritionAiService>();
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
