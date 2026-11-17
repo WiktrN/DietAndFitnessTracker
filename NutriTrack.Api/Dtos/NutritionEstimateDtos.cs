@@ -19,3 +19,19 @@ public record EstimatedMealResponseDto(
     double TotalFat,
     List<EstimatedItemDto> Items
 );
+
+public record EstimateAndLogRequestDto(
+    string Text,
+    DateTime? Date = null
+);
+
+public record EstimatedAndLoggedMealResponseDto(
+    int MealLogId,
+    DateTime Date,
+    string MealName,
+    double TotalCalories,
+    double TotalProtein,
+    double TotalCarbs,
+    double TotalFat,
+    List<EstimatedItemDto> Items
+);
