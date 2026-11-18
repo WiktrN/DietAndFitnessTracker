@@ -27,5 +27,11 @@ public record DailyNutritionSummaryDto(
     double TotalProtein,
     double TotalCarbs,
     double TotalFat,
+    GoalProgressDto? GoalProgress,
     List<MealLogResponseDto> Meals
+);
+
+public record LogMealFromRecipeRequestDto(
+    double ServingsConsumed = 1.0,
+    DateTime? Date = null
 );

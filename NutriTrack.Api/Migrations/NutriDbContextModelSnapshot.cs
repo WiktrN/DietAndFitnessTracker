@@ -87,6 +87,32 @@ namespace NutriTrack.Api.Migrations
                     b.ToTable("MealLogs");
                 });
 
+            modelBuilder.Entity("NutriTrack.Api.Entities.NutritionGoal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("TargetCalories")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("TargetCarbs")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("TargetFat")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("TargetProtein")
+                        .HasColumnType("REAL");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("NutritionGoals");
+                });
+
             modelBuilder.Entity("NutriTrack.Api.Entities.Recipe", b =>
                 {
                     b.Property<int>("Id")

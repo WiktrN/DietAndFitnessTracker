@@ -12,4 +12,5 @@ public class NutriDbContext : DbContext
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<Ingredient> Ingredients => Set<Ingredient>();
     public DbSet<MealLog> MealLogs => Set<MealLog>();
+    public DbSet<NutritionGoal> NutritionGoals => Set<NutritionGoal>();
 }
