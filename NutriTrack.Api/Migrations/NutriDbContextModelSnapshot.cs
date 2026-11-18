@@ -17,6 +17,50 @@ namespace NutriTrack.Api.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("NutriTrack.Api.Entities.ExerciseSetLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExerciseName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ExerciseOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsCompleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Reps")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RestSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SetNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("WeightKg")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("WorkoutSessionId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkoutSessionId");
+
+                    b.ToTable("ExerciseSetLogs");
+                });
+
             modelBuilder.Entity("NutriTrack.Api.Entities.Ingredient", b =>
                 {
                     b.Property<int>("Id")
@@ -134,6 +178,93 @@ namespace NutriTrack.Api.Migrations
                     b.ToTable("Recipes");
                 });
 
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutSession", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("WorkoutTemplateId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkoutTemplateId");
+
+                    b.ToTable("WorkoutSessions");
+                });
+
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutTemplate", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("WorkoutTemplates");
+                });
+
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutTemplateExercise", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ExerciseName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OrderIndex")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RestSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TargetSets")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WorkoutTemplateId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkoutTemplateId");
+
+                    b.ToTable("WorkoutTemplateExercises");
+                });
+
+            modelBuilder.Entity("NutriTrack.Api.Entities.ExerciseSetLog", b =>
+                {
+                    b.HasOne("NutriTrack.Api.Entities.WorkoutSession", "WorkoutSession")
+                        .WithMany("Sets")
+                        .HasForeignKey("WorkoutSessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("WorkoutSession");
+                });
+
             modelBuilder.Entity("NutriTrack.Api.Entities.Ingredient", b =>
                 {
                     b.HasOne("NutriTrack.Api.Entities.Recipe", "Recipe")
@@ -154,9 +285,39 @@ namespace NutriTrack.Api.Migrations
                     b.Navigation("Recipe");
                 });
 
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutSession", b =>
+                {
+                    b.HasOne("NutriTrack.Api.Entities.WorkoutTemplate", "WorkoutTemplate")
+                        .WithMany()
+                        .HasForeignKey("WorkoutTemplateId");
+
+                    b.Navigation("WorkoutTemplate");
+                });
+
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutTemplateExercise", b =>
+                {
+                    b.HasOne("NutriTrack.Api.Entities.WorkoutTemplate", "WorkoutTemplate")
+                        .WithMany("Exercises")
+                        .HasForeignKey("WorkoutTemplateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("WorkoutTemplate");
+                });
+
             modelBuilder.Entity("NutriTrack.Api.Entities.Recipe", b =>
                 {
                     b.Navigation("Ingredients");
+                });
+
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutSession", b =>
+                {
+                    b.Navigation("Sets");
+                });
+
+            modelBuilder.Entity("NutriTrack.Api.Entities.WorkoutTemplate", b =>
+                {
+                    b.Navigation("Exercises");
                 });
 #pragma warning restore 612, 618
         }
