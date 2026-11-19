@@ -1,12 +1,17 @@
 import { useState } from 'react';
-import { Utensils, Dumbbell } from 'lucide-react';
+import { Utensils, ChefHat, Dumbbell } from 'lucide-react';
 import { NutritionTab } from './components/NutritionTab';
+import { RecipesTab } from './components/RecipesTab';
 import { WorkoutTab } from './components/WorkoutTab';
 
-type Tab = 'nutrition' | 'workout';
+type Tab = 'nutrition' | 'recipes' | 'workout';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<Tab>('nutrition');
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
+  const [nutritionRefreshTrigger, setNutritionRefreshTrigger] = useState(0);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -25,12 +30,28 @@ export function App() {
 
       {/* Główna treść */}
       <main className="flex-1 max-w-xl w-full mx-auto px-4 py-5 pb-24">
-        {activeTab === 'nutrition' ? <NutritionTab /> : <WorkoutTab />}
+        {activeTab === 'nutrition' && (
+          <NutritionTab
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            refreshTrigger={nutritionRefreshTrigger}
+          />
+        )}
+        {activeTab === 'recipes' && (
+          <RecipesTab
+            selectedDate={selectedDate}
+            onMealLogged={() => {
+              setNutritionRefreshTrigger((n) => n + 1);
+              setActiveTab('nutrition');
+            }}
+          />
+        )}
+        {activeTab === 'workout' && <WorkoutTab />}
       </main>
 
-      {/* Dolny pasek nawigacji (Mobile-First) */}
+      {/* Dolny pasek nawigacji z 3 zakładkami */}
       <nav className="fixed bottom-0 inset-x-0 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 z-20">
-        <div className="max-w-xl mx-auto grid grid-cols-2">
+        <div className="max-w-xl mx-auto grid grid-cols-3">
           <button
             onClick={() => setActiveTab('nutrition')}
             className={`flex flex-col items-center justify-center py-2.5 gap-1 text-xs font-semibold transition ${
@@ -41,6 +62,18 @@ export function App() {
           >
             <Utensils className="w-5 h-5" />
             <span>Dieta & AI</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('recipes')}
+            className={`flex flex-col items-center justify-center py-2.5 gap-1 text-xs font-semibold transition ${
+              activeTab === 'recipes'
+                ? 'text-amber-400'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <ChefHat className="w-5 h-5" />
+            <span>Przepisy</span>
           </button>
 
           <button

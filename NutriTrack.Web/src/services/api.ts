@@ -1,6 +1,8 @@
 import type {
+  DailyCalendarStatus,
   DailyNutritionSummary,
   EstimatedAndLoggedMealResponse,
+  EstimatedItem,
   MealLogResponse,
   RecipeResponse,
   SetLog,
@@ -36,6 +38,9 @@ export const api = {
   getDailySummary: (date?: string) =>
     request<DailyNutritionSummary>(`/MealLogs/daily${date ? `?date=${date}` : ''}`),
 
+  getMonthlyCalendarStatus: (year: number, month: number) =>
+    request<DailyCalendarStatus[]>(`/MealLogs/monthly-status?year=${year}&month=${month}`),
+
   estimateAndLogMeal: (text: string, date?: string) =>
     request<EstimatedAndLoggedMealResponse>('/Nutrition/estimate-and-log', {
       method: 'POST',
@@ -62,6 +67,7 @@ export const api = {
   createRecipe: (recipe: {
     name: string;
     description?: string;
+    instructions?: string;
     servings: number;
     ingredients: {
       name: string;
@@ -70,6 +76,7 @@ export const api = {
       protein: number;
       carbs: number;
       fat: number;
+      sectionName?: string;
     }[];
   }) =>
     request<RecipeResponse>('/Recipes', {
@@ -77,10 +84,38 @@ export const api = {
       body: JSON.stringify(recipe),
     }),
 
+  createRecipeFromAi: (payload: {
+    name: string;
+    description?: string;
+    instructions?: string;
+    servings: number;
+    items: EstimatedItem[];
+  }) =>
+    request<RecipeResponse>('/Recipes/from-ai', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteRecipe: (id: number) =>
+    request<void>(`/Recipes/${id}`, { method: 'DELETE' }),
+
   logMealFromRecipe: (recipeId: number, servingsConsumed: number) =>
     request<MealLogResponse>(`/MealLogs/from-recipe/${recipeId}`, {
       method: 'POST',
       body: JSON.stringify({ servingsConsumed }),
+    }),
+
+  logMealFromRecipeCustom: (
+    recipeId: number,
+    payload: {
+      servingsConsumed: number;
+      date?: string;
+      ingredientOverrides?: { ingredientId: number; customAmountInGrams: number }[];
+    }
+  ) =>
+    request<MealLogResponse>(`/MealLogs/from-recipe-custom/${recipeId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
 
   // --- TRENINGI ---
@@ -104,6 +139,27 @@ export const api = {
       body: JSON.stringify(template),
     }),
 
+  updateWorkoutTemplate: (
+    id: number,
+    template: {
+      name: string;
+      description?: string;
+      exercises: {
+        exerciseName: string;
+        orderIndex: number;
+        targetSets: number;
+        restSeconds: number;
+        notes?: string;
+        muscleGroup: string;
+        exerciseType: 'Strength' | 'Cardio';
+      }[];
+    }
+  ) =>
+    request<WorkoutTemplate>(`/WorkoutTemplates/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(template),
+    }),
+
   deleteWorkoutTemplate: (id: number) =>
     request<void>(`/WorkoutTemplates/${id}`, { method: 'DELETE' }),
 
@@ -114,16 +170,14 @@ export const api = {
       method: 'POST',
     }),
 
-  startEmptyWorkout: (name = 'Trening siłowy') =>
-    request<WorkoutSession>(`/WorkoutSessions/start-empty?name=${encodeURIComponent(name)}`, {
-      method: 'POST',
-    }),
-
   updateSet: (setId: number, data: { weightKg: number; reps: number; isCompleted: boolean }) =>
     request<SetLog>(`/WorkoutSessions/sets/${setId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+
+  deleteSet: (setId: number) =>
+    request<void>(`/WorkoutSessions/sets/${setId}`, { method: 'DELETE' }),
 
   addSetToSession: (
     sessionId: number,

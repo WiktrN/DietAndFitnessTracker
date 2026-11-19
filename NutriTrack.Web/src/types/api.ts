@@ -54,6 +54,13 @@ export interface DailyNutritionSummary {
   meals: MealLogResponse[];
 }
 
+export interface DailyCalendarStatus {
+  date: string;
+  status: 'Empty' | 'Partial' | 'OnTarget';
+  totalCalories: number;
+  targetCalories: number;
+}
+
 export interface RecipeIngredient {
   id: number;
   name: string;
@@ -62,12 +69,14 @@ export interface RecipeIngredient {
   protein: number;
   carbs: number;
   fat: number;
+  sectionName?: string | null;
 }
 
 export interface RecipeResponse {
   id: number;
   name: string;
   description?: string | null;
+  instructions?: string | null;
   servings: number;
   totalCalories: number;
   totalProtein: number;

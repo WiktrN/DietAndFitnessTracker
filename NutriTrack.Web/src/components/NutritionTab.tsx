@@ -3,19 +3,17 @@ import {
   Sparkles,
   Trash2,
   Target,
-  ChefHat,
   Loader2,
   CheckCircle2,
-  Plus,
   ChevronLeft,
   ChevronRight,
-  X,
+  BookmarkPlus,
 } from 'lucide-react';
 import { api } from '../services/api';
 import type {
+  DailyCalendarStatus,
   DailyNutritionSummary,
   EstimatedAndLoggedMealResponse,
-  RecipeResponse,
 } from '../types/api';
 
 const MONTHS_PL = [
@@ -23,25 +21,38 @@ const MONTHS_PL = [
   'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
 ];
 
-export function NutritionTab() {
+interface NutritionTabProps {
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
+  refreshTrigger: number;
+}
+
+export function NutritionTab({
+  selectedDate,
+  onSelectDate,
+  refreshTrigger,
+}: NutritionTabProps) {
   const today = useMemo(() => new Date(), []);
   const todayIso = today.toISOString().split('T')[0];
 
-  const [selectedDate, setSelectedDate] = useState<string>(todayIso);
   const [calendarYear, setCalendarYear] = useState<number>(today.getFullYear());
   const [calendarMonth, setCalendarMonth] = useState<number>(today.getMonth());
   const [showCalendarGrid, setShowCalendarGrid] = useState<boolean>(false);
+  const [monthStatuses, setMonthStatuses] = useState<Record<string, DailyCalendarStatus>>({});
 
   const [summary, setSummary] = useState<DailyNutritionSummary | null>(null);
-  const [recipes, setRecipes] = useState<RecipeResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // AI Input
+  // AI Input + Zapisywanie wyniku AI jako przepis
   const [mealText, setMealText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [lastAiResult, setLastAiResult] =
     useState<EstimatedAndLoggedMealResponse | null>(null);
+  const [showSaveAiRecipe, setShowSaveAiRecipe] = useState(false);
+  const [aiRecipeName, setAiRecipeName] = useState('');
+  const [aiRecipeServings, setAiRecipeServings] = useState(1);
+  const [aiRecipeSavedMsg, setAiRecipeSavedMsg] = useState(false);
 
   // Edycja celów
   const [showGoalEditor, setShowGoalEditor] = useState(false);
@@ -52,27 +63,23 @@ export function NutritionTab() {
     targetFat: 82,
   });
 
-  // Dodawanie z przepisu & Kreator nowego przepisu
-  const [selectedRecipeId, setSelectedRecipeId] = useState<number | ''>('');
-  const [servingsConsumed, setServingsConsumed] = useState<number>(1);
-  const [recipeLoading, setRecipeLoading] = useState(false);
-  const [showRecipeCreator, setShowRecipeCreator] = useState(false);
-  const [newRecipeName, setNewRecipeName] = useState('');
-  const [newRecipeServings, setNewRecipeServings] = useState(1);
-  const [newIngredients, setNewIngredients] = useState([
-    { name: '', amountInGrams: 100, calories: 0, protein: 0, carbs: 0, fat: 0 },
-  ]);
-
   const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const [dailyData, recipesData] = await Promise.all([
+      const [dailyData, statuses] = await Promise.all([
         api.getDailySummary(selectedDate),
-        api.getRecipes().catch(() => [] as RecipeResponse[]),
+        api
+          .getMonthlyCalendarStatus(calendarYear, calendarMonth + 1)
+          .catch(() => [] as DailyCalendarStatus[]),
       ]);
       setSummary(dailyData);
-      setRecipes(recipesData);
+
+      const statusMap: Record<string, DailyCalendarStatus> = {};
+      statuses.forEach((s) => {
+        statusMap[s.date] = s;
+      });
+      setMonthStatuses(statusMap);
 
       if (dailyData.goalProgress) {
         setGoalForm({
@@ -91,7 +98,7 @@ export function NutritionTab() {
 
   useEffect(() => {
     loadData();
-  }, [selectedDate]);
+  }, [selectedDate, calendarYear, calendarMonth, refreshTrigger]);
 
   const daysInCalendarMonth = useMemo(() => {
     const totalDays = new Date(calendarYear, calendarMonth + 1, 0).getDate();
@@ -108,7 +115,7 @@ export function NutritionTab() {
     const current = new Date(selectedDate);
     current.setDate(current.getDate() + offset);
     const nextIso = current.toISOString().split('T')[0];
-    setSelectedDate(nextIso);
+    onSelectDate(nextIso);
     setCalendarYear(current.getFullYear());
     setCalendarMonth(current.getMonth());
   };
@@ -120,15 +127,35 @@ export function NutritionTab() {
     try {
       setAiLoading(true);
       setError(null);
+      setAiRecipeSavedMsg(false);
+      setShowSaveAiRecipe(false);
       const isoDate = `${selectedDate}T12:00:00Z`;
       const result = await api.estimateAndLogMeal(mealText.trim(), isoDate);
       setLastAiResult(result);
+      setAiRecipeName(result.mealName);
       setMealText('');
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Błąd przetwarzania AI.');
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleSaveAiAsRecipe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lastAiResult || !aiRecipeName.trim()) return;
+
+    try {
+      await api.createRecipeFromAi({
+        name: aiRecipeName.trim(),
+        servings: aiRecipeServings > 0 ? aiRecipeServings : 1,
+        items: lastAiResult.items,
+      });
+      setShowSaveAiRecipe(false);
+      setAiRecipeSavedMsg(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się zapisać przepisu.');
     }
   };
 
@@ -149,46 +176,6 @@ export function NutritionTab() {
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zapisać celu.');
-    }
-  };
-
-  const handleLogFromRecipe = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRecipeId) return;
-
-    try {
-      setRecipeLoading(true);
-      await api.logMealFromRecipe(Number(selectedRecipeId), servingsConsumed);
-      setSelectedRecipeId('');
-      setServingsConsumed(1);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Błąd dodawania przepisu.');
-    } finally {
-      setRecipeLoading(false);
-    }
-  };
-
-  const handleCreateRecipe = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const valid = newIngredients.filter((i) => i.name.trim() !== '');
-    if (!newRecipeName.trim() || valid.length === 0) return;
-
-    try {
-      await api.createRecipe({
-        name: newRecipeName.trim(),
-        servings: newRecipeServings > 0 ? newRecipeServings : 1,
-        ingredients: valid,
-      });
-      setNewRecipeName('');
-      setNewRecipeServings(1);
-      setNewIngredients([
-        { name: '', amountInGrams: 100, calories: 0, protein: 0, carbs: 0, fat: 0 },
-      ]);
-      setShowRecipeCreator(false);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się zapisać przepisu.');
     }
   };
 
@@ -231,7 +218,7 @@ export function NutritionTab() {
           </button>
         </div>
 
-        {/* Rozwijana tabela kalendarza (2026 / 2027) */}
+        {/* Rozwijana tabela kalendarza z kolorowaniem dni */}
         {showCalendarGrid && (
           <div className="pt-2 border-t border-zinc-800 space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -266,26 +253,55 @@ export function NutritionTab() {
             <div className="grid grid-cols-7 gap-1.5">
               {daysInCalendarMonth.map(({ dayNum, iso }) => {
                 const isSelected = iso === selectedDate;
-                const isToday = iso === todayIso;
+                const statusInfo = monthStatuses[iso];
+                const status = statusInfo?.status ?? 'Empty';
+
+                let colorClass = 'bg-zinc-950/70 text-zinc-400 hover:bg-zinc-800';
+                if (status === 'OnTarget') {
+                  colorClass =
+                    'bg-emerald-500/25 border border-emerald-500/60 text-emerald-300';
+                } else if (status === 'Partial') {
+                  colorClass = 'bg-sky-500/20 border border-sky-500/50 text-sky-300';
+                }
+
+                if (isSelected) {
+                  colorClass += ' ring-2 ring-amber-400';
+                }
+
                 return (
                   <button
                     key={iso}
                     onClick={() => {
-                      setSelectedDate(iso);
+                      onSelectDate(iso);
                       setShowCalendarGrid(false);
                     }}
-                    className={`py-1.5 rounded-lg text-xs font-semibold transition ${
-                      isSelected
-                        ? 'bg-amber-500 text-zinc-950'
-                        : isToday
-                        ? 'border border-amber-500/60 text-amber-400 bg-zinc-950'
-                        : 'bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800'
-                    }`}
+                    title={
+                      statusInfo && statusInfo.totalCalories > 0
+                        ? `${statusInfo.totalCalories} / ${statusInfo.targetCalories} kcal`
+                        : 'Brak wpisów'
+                    }
+                    className={`py-1.5 rounded-lg text-xs font-semibold transition ${colorClass}`}
                   >
                     {dayNum}
                   </button>
                 );
               })}
+            </div>
+
+            {/* Legenda kolorów kalendarza */}
+            <div className="flex flex-wrap items-center justify-center gap-4 text-[11px] text-zinc-400 pt-1">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-zinc-800 inline-block" />
+                Brak wpisów
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-sky-500/40 border border-sky-500 inline-block" />
+                Uzupełnione
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/40 border border-emerald-500 inline-block" />
+                Idealne makro (±5%)
+              </span>
             </div>
           </div>
         )}
@@ -444,7 +460,7 @@ export function NutritionTab() {
           rows={2}
           value={mealText}
           onChange={(e) => setMealText(e.target.value)}
-          placeholder="np. 200g serek wiejski wysokobiałkowy Piątnica, 2 kajzerki i 150g piersi z kurczaka..."
+          placeholder="np. 250g frytek z airfryera Mr. Potato, 500g mięsa z indyka Kraina Mięs, 200g serka wiejskiego..."
           className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
         />
         <button
@@ -466,12 +482,12 @@ export function NutritionTab() {
         </button>
       </form>
 
-      {/* Podgląd ostatnio dodanego posiłku przez AI */}
+      {/* Podgląd wyniku AI z opcją zapisania w książce przepisów */}
       {lastAiResult && (
-        <div className="bg-emerald-950/30 border border-emerald-800/50 rounded-2xl p-4 space-y-2.5">
-          <div className="flex items-center justify-between">
+        <div className="bg-emerald-950/30 border border-emerald-800/50 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
-              <CheckCircle2 className="w-4 h-4" />
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>Dodano: {lastAiResult.mealName}</span>
             </div>
             <button
@@ -481,6 +497,7 @@ export function NutritionTab() {
               Zamknij
             </button>
           </div>
+
           <div className="divide-y divide-zinc-800/80 text-xs">
             {lastAiResult.items.map((item, idx) => (
               <div key={idx} className="py-1.5 flex justify-between text-zinc-300">
@@ -493,228 +510,50 @@ export function NutritionTab() {
               </div>
             ))}
           </div>
+
+          {aiRecipeSavedMsg ? (
+            <p className="text-xs text-emerald-300 font-semibold">
+              ✓ Zapisano w zakładce „Przepisy”!
+            </p>
+          ) : !showSaveAiRecipe ? (
+            <button
+              type="button"
+              onClick={() => setShowSaveAiRecipe(true)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 hover:underline"
+            >
+              <BookmarkPlus className="w-4 h-4" />
+              Zapisz ten posiłek jako przepis
+            </button>
+          ) : (
+            <form
+              onSubmit={handleSaveAiAsRecipe}
+              className="pt-2 border-t border-zinc-800 flex flex-col sm:flex-row gap-2"
+            >
+              <input
+                type="text"
+                value={aiRecipeName}
+                onChange={(e) => setAiRecipeName(e.target.value)}
+                placeholder="Nazwa przepisu"
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+              />
+              <input
+                type="number"
+                min={1}
+                value={aiRecipeServings}
+                onChange={(e) => setAiRecipeServings(Number(e.target.value))}
+                title="Liczba porcji"
+                className="w-16 bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-1.5 text-xs text-center"
+              />
+              <button
+                type="submit"
+                className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-1.5 rounded-xl"
+              >
+                Zapisz przepis
+              </button>
+            </form>
+          )}
         </div>
       )}
-
-      {/* Zapisane przepisy + Kreator przepisu */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-200">
-            <ChefHat className="w-4 h-4 text-amber-400" />
-            <span>Zapisane przepisy</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowRecipeCreator(!showRecipeCreator)}
-            className="text-xs font-semibold text-amber-400 hover:underline flex items-center gap-1"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            {showRecipeCreator ? 'Ukryj kreator' : 'Nowy przepis'}
-          </button>
-        </div>
-
-        {/* Formularz wyboru przepisu dopasowany do szerokości karty */}
-        <form onSubmit={handleLogFromRecipe} className="flex flex-col sm:flex-row gap-2">
-          <select
-            value={selectedRecipeId}
-            onChange={(e) =>
-              setSelectedRecipeId(e.target.value ? Number(e.target.value) : '')
-            }
-            className="w-full min-w-0 flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 truncate"
-          >
-            <option value="">-- Wybierz przepis ({recipes.length}) --</option>
-            {recipes.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name} ({Math.round(r.totalCalories / (r.servings || 1))} kcal / porcję)
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center gap-2 shrink-0">
-            <input
-              type="number"
-              step="0.25"
-              min="0.25"
-              value={servingsConsumed}
-              onChange={(e) => setServingsConsumed(Number(e.target.value))}
-              className="w-16 bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-2 text-sm text-center"
-              title="Liczba porcji"
-            />
-            <button
-              type="submit"
-              disabled={!selectedRecipeId || recipeLoading}
-              className="flex items-center gap-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white text-sm font-medium px-3.5 py-2 rounded-xl transition shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              Dodaj
-            </button>
-          </div>
-        </form>
-
-        {/* Kreator nowego przepisu */}
-        {showRecipeCreator && (
-          <form
-            onSubmit={handleCreateRecipe}
-            className="pt-3 border-t border-zinc-800 space-y-3"
-          >
-            <div className="grid grid-cols-12 gap-2">
-              <div className="col-span-8">
-                <label className="block text-[11px] text-zinc-400 mb-1">Nazwa przepisu</label>
-                <input
-                  type="text"
-                  value={newRecipeName}
-                  onChange={(e) => setNewRecipeName(e.target.value)}
-                  placeholder="np. Makaron ze szpinakiem i kurczakiem"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
-                />
-              </div>
-              <div className="col-span-4">
-                <label className="block text-[11px] text-zinc-400 mb-1">Liczba porcji</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={newRecipeServings}
-                  onChange={(e) => setNewRecipeServings(Number(e.target.value))}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-1.5 text-xs text-center"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-[11px] font-semibold text-zinc-400">
-                Składniki (wartości dla podanej gramatury):
-              </p>
-              {newIngredients.map((ing, idx) => (
-                <div
-                  key={idx}
-                  className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-2.5 space-y-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={ing.name}
-                      onChange={(e) => {
-                        const copy = [...newIngredients];
-                        copy[idx].name = e.target.value;
-                        setNewIngredients(copy);
-                      }}
-                      placeholder="Składnik (np. Pierś z kurczaka)"
-                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs"
-                    />
-                    {newIngredients.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNewIngredients(newIngredients.filter((_, i) => i !== idx))
-                        }
-                        className="text-zinc-500 hover:text-red-400 p-1"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-5 gap-1.5 text-center">
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Gramy</span>
-                      <input
-                        type="number"
-                        value={ing.amountInGrams}
-                        onChange={(e) => {
-                          const copy = [...newIngredients];
-                          copy[idx].amountInGrams = Number(e.target.value);
-                          setNewIngredients(copy);
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Kcal</span>
-                      <input
-                        type="number"
-                        value={ing.calories}
-                        onChange={(e) => {
-                          const copy = [...newIngredients];
-                          copy[idx].calories = Number(e.target.value);
-                          setNewIngredients(copy);
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Białko</span>
-                      <input
-                        type="number"
-                        value={ing.protein}
-                        onChange={(e) => {
-                          const copy = [...newIngredients];
-                          copy[idx].protein = Number(e.target.value);
-                          setNewIngredients(copy);
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Węgle</span>
-                      <input
-                        type="number"
-                        value={ing.carbs}
-                        onChange={(e) => {
-                          const copy = [...newIngredients];
-                          copy[idx].carbs = Number(e.target.value);
-                          setNewIngredients(copy);
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Tłuszcz</span>
-                      <input
-                        type="number"
-                        value={ing.fat}
-                        onChange={(e) => {
-                          const copy = [...newIngredients];
-                          copy[idx].fat = Number(e.target.value);
-                          setNewIngredients(copy);
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                onClick={() =>
-                  setNewIngredients([
-                    ...newIngredients,
-                    { name: '', amountInGrams: 100, calories: 0, protein: 0, carbs: 0, fat: 0 },
-                  ])
-                }
-                className="text-xs text-amber-400 hover:underline"
-              >
-                + Kolejny składnik
-              </button>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowRecipeCreator(false)}
-                  className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white"
-                >
-                  Anuluj
-                </button>
-                <button
-                  type="submit"
-                  className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-4 py-1.5 rounded-xl"
-                >
-                  Zapisz przepis
-                </button>
-              </div>
-            </div>
-          </form>
-        )}
-      </div>
 
       {/* Lista posiłków z wybranego dnia */}
       <div className="space-y-2.5">
