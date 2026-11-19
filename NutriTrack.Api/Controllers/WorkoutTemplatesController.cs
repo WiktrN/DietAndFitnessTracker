@@ -84,6 +84,55 @@ public class WorkoutTemplatesController : ControllerBase
         return CreatedAtAction(nameof(GetTemplateById), new { id = template.Id }, response);
     }
 
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<WorkoutTemplateResponseDto>> UpdateTemplate(
+        int id,
+        [FromBody] CreateWorkoutTemplateDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Name))
+        {
+            return BadRequest("Nazwa planu treningowego nie może być pusta.");
+        }
+
+        if (dto.Exercises == null || dto.Exercises.Count == 0)
+        {
+            return BadRequest("Plan treningowy musi zawierać przynajmniej jedno ćwiczenie.");
+        }
+
+        var template = await _context.WorkoutTemplates
+            .Include(t => t.Exercises)
+            .FirstOrDefaultAsync(t => t.Id == id);
+
+        if (template == null)
+        {
+            return NotFound($"Nie znaleziono planu treningowego o ID {id}.");
+        }
+
+        template.Name = dto.Name.Trim();
+        template.Description = dto.Description?.Trim();
+
+        _context.WorkoutTemplateExercises.RemoveRange(template.Exercises);
+
+        template.Exercises = dto.Exercises
+            .OrderBy(e => e.OrderIndex)
+            .Select((e, idx) => new WorkoutTemplateExercise
+            {
+                WorkoutTemplateId = template.Id,
+                ExerciseName = e.ExerciseName.Trim(),
+                OrderIndex = e.OrderIndex > 0 ? e.OrderIndex : idx + 1,
+                TargetSets = e.TargetSets > 0 ? e.TargetSets : 3,
+                RestSeconds = e.RestSeconds >= 0 ? e.RestSeconds : 120,
+                MuscleGroup = string.IsNullOrWhiteSpace(e.MuscleGroup) ? "Ogólne" : e.MuscleGroup.Trim(),
+                ExerciseType = string.IsNullOrWhiteSpace(e.ExerciseType) ? "Strength" : e.ExerciseType.Trim(),
+                Notes = e.Notes?.Trim()
+            })
+            .ToList();
+
+        await _context.SaveChangesAsync();
+
+        return Ok(MapToResponseDto(template));
+    }
+
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteTemplate(int id)
     {

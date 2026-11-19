@@ -17,79 +17,148 @@ public class RecipesController : ControllerBase
         _context = context;
     }
 
-    // GET: api/recipes
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<RecipeResponseDto>>> GetRecipes()
+    public async Task<ActionResult<List<RecipeResponseDto>>> GetAllRecipes()
     {
         var recipes = await _context.Recipes
-            .Include(r => r.Ingredients)
             .AsNoTracking()
+            .Include(r => r.Ingredients)
+            .OrderByDescending(r => r.Id)
             .ToListAsync();
 
-        var response = recipes.Select(r => new RecipeResponseDto(
-            r.Id,
-            r.Name,
-            r.Description,
-            r.Servings,
-            r.Ingredients.Sum(i => i.Calories),
-            r.Ingredients.Sum(i => i.Protein),
-            r.Ingredients.Sum(i => i.Carbs),
-            r.Ingredients.Sum(i => i.Fat),
-            r.Ingredients.Select(i => new IngredientDto(
-                i.Name,
-                i.AmountInGrams,
-                i.Calories,
-                i.Protein,
-                i.Carbs,
-                i.Fat
-            )).ToList()
-        ));
-
-        return Ok(response);
+        return Ok(recipes.Select(MapToResponseDto).ToList());
     }
 
-    // POST: api/recipes
-    [HttpPost]
-    public async Task<ActionResult<RecipeResponseDto>> CreateRecipe([FromBody] CreateRecipeDto dto)
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<RecipeResponseDto>> GetRecipeById(int id)
     {
+        var recipe = await _context.Recipes
+            .AsNoTracking()
+            .Include(r => r.Ingredients)
+            .FirstOrDefaultAsync(r => r.Id == id);
+
+        if (recipe == null)
+        {
+            return NotFound($"Nie znaleziono przepisu o ID {id}.");
+        }
+
+        return Ok(MapToResponseDto(recipe));
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<RecipeResponseDto>> CreateRecipe([FromBody] CreateRecipeRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Name))
+        {
+            return BadRequest("Nazwa przepisu nie może być pusta.");
+        }
+
+        if (dto.Ingredients == null || dto.Ingredients.Count == 0)
+        {
+            return BadRequest("Przepis musi zawierać przynajmniej jeden składnik.");
+        }
+
         var recipe = new Recipe
         {
-            Name = dto.Name,
-            Description = dto.Description,
-            Servings = dto.Servings,
+            Name = dto.Name.Trim(),
+            Description = dto.Description?.Trim(),
+            Instructions = dto.Instructions?.Trim(),
+            Servings = dto.Servings > 0 ? dto.Servings : 1,
             Ingredients = dto.Ingredients.Select(i => new Ingredient
             {
-                Name = i.Name,
+                Name = i.Name.Trim(),
                 AmountInGrams = i.AmountInGrams,
                 Calories = i.Calories,
                 Protein = i.Protein,
                 Carbs = i.Carbs,
-                Fat = i.Fat
+                Fat = i.Fat,
+                SectionName = string.IsNullOrWhiteSpace(i.SectionName) ? "Składniki główne" : i.SectionName.Trim()
             }).ToList()
         };
 
         _context.Recipes.Add(recipe);
         await _context.SaveChangesAsync();
 
-        var response = new RecipeResponseDto(
-            recipe.Id,
-            recipe.Name,
-            recipe.Description,
-            recipe.Servings,
-            recipe.Ingredients.Sum(i => i.Calories),
-            recipe.Ingredients.Sum(i => i.Protein),
-            recipe.Ingredients.Sum(i => i.Carbs),
-            recipe.Ingredients.Sum(i => i.Fat),
-            recipe.Ingredients.Select(i => new IngredientDto(
-                i.Name,
-                i.AmountInGrams,
-                i.Calories,
-                i.Protein,
-                i.Carbs,
-                i.Fat
+        return CreatedAtAction(nameof(GetRecipeById), new { id = recipe.Id }, MapToResponseDto(recipe));
+    }
+
+    [HttpPost("from-ai")]
+    public async Task<ActionResult<RecipeResponseDto>> CreateRecipeFromAi([FromBody] CreateRecipeFromAiRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Name) || dto.Items == null || dto.Items.Count == 0)
+        {
+            return BadRequest("Podaj nazwę przepisu oraz listę składników.");
+        }
+
+        var recipe = new Recipe
+        {
+            Name = dto.Name.Trim(),
+            Description = dto.Description?.Trim(),
+            Instructions = dto.Instructions?.Trim(),
+            Servings = dto.Servings > 0 ? dto.Servings : 1,
+            Ingredients = dto.Items.Select(i => new Ingredient
+            {
+                Name = i.Name.Trim(),
+                AmountInGrams = i.AmountInGrams,
+                Calories = i.Calories,
+                Protein = i.Protein,
+                Carbs = i.Carbs,
+                Fat = i.Fat,
+                SectionName = "Składniki główne"
+            }).ToList()
+        };
+
+        _context.Recipes.Add(recipe);
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetRecipeById), new { id = recipe.Id }, MapToResponseDto(recipe));
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteRecipe(int id)
+    {
+        var recipe = await _context.Recipes.FindAsync(id);
+        if (recipe == null)
+        {
+            return NotFound($"Nie znaleziono przepisu o ID {id}.");
+        }
+
+        // Odpinamy przepis od historycznych wpisów w dzienniku, żeby zachować historię kalorii
+        var linkedMeals = await _context.MealLogs
+            .Where(m => m.RecipeId == id)
+            .ToListAsync();
+
+        foreach (var meal in linkedMeals)
+        {
+            meal.RecipeId = null;
+        }
+
+        _context.Recipes.Remove(recipe);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    private static RecipeResponseDto MapToResponseDto(Recipe recipe) =>
+        new(
+            Id: recipe.Id,
+            Name: recipe.Name,
+            Description: recipe.Description,
+            Instructions: recipe.Instructions,
+            Servings: recipe.Servings,
+            TotalCalories: Math.Round(recipe.Ingredients.Sum(i => i.Calories), 1),
+            TotalProtein: Math.Round(recipe.Ingredients.Sum(i => i.Protein), 1),
+            TotalCarbs: Math.Round(recipe.Ingredients.Sum(i => i.Carbs), 1),
+            TotalFat: Math.Round(recipe.Ingredients.Sum(i => i.Fat), 1),
+            Ingredients: recipe.Ingredients.Select(i => new RecipeIngredientResponseDto(
+                Id: i.Id,
+                Name: i.Name,
+                AmountInGrams: i.AmountInGrams,
+                Calories: i.Calories,
+                Protein: i.Protein,
+                Carbs: i.Carbs,
+                Fat: i.Fat,
+                SectionName: i.SectionName
             )).ToList()
         );
-
-        return CreatedAtAction(nameof(GetRecipes), new { id = recipe.Id }, response);
-    }
 }

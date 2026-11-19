@@ -11,6 +11,7 @@ public class Ingredient
     public double Carbs { get; set; }
     public double Fat { get; set; }
 
+    public string? SectionName { get; set; }
     public int RecipeId { get; set; }
     public Recipe? Recipe { get; set; }
 }

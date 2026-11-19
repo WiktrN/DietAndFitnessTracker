@@ -97,6 +97,9 @@ namespace NutriTrack.Api.Migrations
                     b.Property<int>("RecipeId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("SectionName")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("RecipeId");
@@ -172,6 +175,9 @@ namespace NutriTrack.Api.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Instructions")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")

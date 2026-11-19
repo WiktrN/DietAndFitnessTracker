@@ -243,6 +243,36 @@ public class WorkoutSessionsController : ControllerBase
         ));
     }
 
+    [HttpDelete("sets/{setId:int}")]
+    public async Task<IActionResult> DeleteSet(int setId)
+    {
+        var set = await _context.ExerciseSetLogs.FindAsync(setId);
+        if (set == null)
+        {
+            return NotFound($"Nie znaleziono serii o ID {setId}.");
+        }
+
+        var sessionId = set.WorkoutSessionId;
+        var exerciseName = set.ExerciseName;
+
+        _context.ExerciseSetLogs.Remove(set);
+        await _context.SaveChangesAsync();
+
+        var remainingSets = await _context.ExerciseSetLogs
+            .Where(s => s.WorkoutSessionId == sessionId &&
+                        s.ExerciseName.ToLower() == exerciseName.ToLower())
+            .OrderBy(s => s.SetNumber)
+            .ToListAsync();
+
+        for (int i = 0; i < remainingSets.Count; i++)
+        {
+            remainingSets[i].SetNumber = i + 1;
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpDelete("{sessionId:int}/exercises/{exerciseName}")]
     public async Task<IActionResult> RemoveExerciseFromSession(int sessionId, string exerciseName)
     {

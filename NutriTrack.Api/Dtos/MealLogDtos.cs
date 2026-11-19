@@ -35,3 +35,21 @@ public record LogMealFromRecipeRequestDto(
     double ServingsConsumed = 1.0,
     DateTime? Date = null
 );
+
+public record DailyCalendarStatusDto(
+    DateOnly Date,
+    string Status, // "Empty", "Partial", "OnTarget"
+    double TotalCalories,
+    double TargetCalories
+);
+
+public record IngredientOverrideDto(
+    int IngredientId,
+    double CustomAmountInGrams
+);
+
+public record LogFromRecipeCustomRequestDto(
+    double ServingsConsumed = 1,
+    DateTime? Date = null,
+    List<IngredientOverrideDto>? IngredientOverrides = null
+);
