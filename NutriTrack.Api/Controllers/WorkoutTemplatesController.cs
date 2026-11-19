@@ -70,6 +70,8 @@ public class WorkoutTemplatesController : ControllerBase
                     OrderIndex = e.OrderIndex > 0 ? e.OrderIndex : idx + 1,
                     TargetSets = e.TargetSets > 0 ? e.TargetSets : 3,
                     RestSeconds = e.RestSeconds >= 0 ? e.RestSeconds : 120,
+                    MuscleGroup = string.IsNullOrWhiteSpace(e.MuscleGroup) ? "Ogólne" : e.MuscleGroup.Trim(),
+                    ExerciseType = string.IsNullOrWhiteSpace(e.ExerciseType) ? "Strength" : e.ExerciseType.Trim(),
                     Notes = e.Notes?.Trim()
                 })
                 .ToList()
@@ -110,6 +112,8 @@ public class WorkoutTemplatesController : ControllerBase
                     OrderIndex: e.OrderIndex,
                     TargetSets: e.TargetSets,
                     RestSeconds: e.RestSeconds,
+                    MuscleGroup: e.MuscleGroup,
+                    ExerciseType: e.ExerciseType,
                     Notes: e.Notes
                 ))
                 .ToList()

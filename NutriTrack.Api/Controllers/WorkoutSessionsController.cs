@@ -51,6 +51,8 @@ public class WorkoutSessionsController : ControllerBase
                     SetNumber = setNum,
                     RestSeconds = exercise.RestSeconds,
                     Notes = exercise.Notes,
+                    MuscleGroup = exercise.MuscleGroup,
+                    ExerciseType = exercise.ExerciseType,
                     WeightKg = prevSet?.WeightKg ?? 0,
                     Reps = prevSet?.Reps ?? 0,
                     IsCompleted = false
@@ -151,9 +153,13 @@ public class WorkoutSessionsController : ControllerBase
             ? existingExerciseSets.First().ExerciseOrder
             : (session.Sets.Count > 0 ? session.Sets.Max(s => s.ExerciseOrder) + 1 : 1);
 
+        var firstExisting = existingExerciseSets.FirstOrDefault();
         var lastSetInCurrentSession = existingExerciseSets.LastOrDefault();
         var previousSets = await GetLastCompletedSetsForExerciseAsync(normalizedName);
         var prevHistorySet = previousSets.FirstOrDefault(s => s.SetNumber == nextSetNumber);
+
+        var muscleGroup = firstExisting?.MuscleGroup ?? dto.MuscleGroup;
+        var exerciseType = firstExisting?.ExerciseType ?? dto.ExerciseType;
 
         var newSet = new ExerciseSetLog
         {
@@ -161,8 +167,10 @@ public class WorkoutSessionsController : ControllerBase
             ExerciseName = normalizedName,
             ExerciseOrder = exerciseOrder,
             SetNumber = nextSetNumber,
-            RestSeconds = existingExerciseSets.FirstOrDefault()?.RestSeconds ?? dto.RestSeconds,
-            Notes = existingExerciseSets.FirstOrDefault()?.Notes ?? dto.Notes?.Trim(),
+            RestSeconds = firstExisting?.RestSeconds ?? dto.RestSeconds,
+            Notes = firstExisting?.Notes ?? dto.Notes?.Trim(),
+            MuscleGroup = muscleGroup,
+            ExerciseType = exerciseType,
             WeightKg = lastSetInCurrentSession?.WeightKg ?? prevHistorySet?.WeightKg ?? 0,
             Reps = lastSetInCurrentSession?.Reps ?? prevHistorySet?.Reps ?? 0,
             IsCompleted = false
@@ -171,8 +179,11 @@ public class WorkoutSessionsController : ControllerBase
         _context.ExerciseSetLogs.Add(newSet);
         await _context.SaveChangesAsync();
 
+        var isCardio = exerciseType == "Cardio" || muscleGroup == "Cardio";
         var previousText = prevHistorySet != null
-            ? $"{prevHistorySet.Reps} x {prevHistorySet.WeightKg}kg"
+            ? (isCardio
+                ? $"{prevHistorySet.Reps} min @ {prevHistorySet.WeightKg}%"
+                : $"{prevHistorySet.Reps} x {prevHistorySet.WeightKg}kg")
             : null;
 
         return Ok(new SetLogResponseDto(
@@ -193,7 +204,7 @@ public class WorkoutSessionsController : ControllerBase
     {
         if (dto.WeightKg < 0 || dto.Reps < 0)
         {
-            return BadRequest("Ciężar i liczba powtórzeń nie mogą być ujemne.");
+            return BadRequest("Wartości nie mogą być ujemne.");
         }
 
         var set = await _context.ExerciseSetLogs
@@ -214,8 +225,11 @@ public class WorkoutSessionsController : ControllerBase
 
         var previousSets = await GetLastCompletedSetsForExerciseAsync(set.ExerciseName, excludeSessionId: set.WorkoutSessionId);
         var prevHistorySet = previousSets.FirstOrDefault(s => s.SetNumber == set.SetNumber);
+        var isCardio = set.ExerciseType == "Cardio" || set.MuscleGroup == "Cardio";
         var previousText = prevHistorySet != null
-            ? $"{prevHistorySet.Reps} x {prevHistorySet.WeightKg}kg"
+            ? (isCardio
+                ? $"{prevHistorySet.Reps} min @ {prevHistorySet.WeightKg}%"
+                : $"{prevHistorySet.Reps} x {prevHistorySet.WeightKg}kg")
             : null;
 
         return Ok(new SetLogResponseDto(
@@ -227,6 +241,39 @@ public class WorkoutSessionsController : ControllerBase
             IsCompleted: set.IsCompleted,
             CompletedAt: set.CompletedAt
         ));
+    }
+
+    [HttpDelete("{sessionId:int}/exercises/{exerciseName}")]
+    public async Task<IActionResult> RemoveExerciseFromSession(int sessionId, string exerciseName)
+    {
+        var decodedName = Uri.UnescapeDataString(exerciseName).Trim();
+        var setsToRemove = await _context.ExerciseSetLogs
+            .Where(s => s.WorkoutSessionId == sessionId &&
+                        s.ExerciseName.ToLower() == decodedName.ToLower())
+            .ToListAsync();
+
+        if (setsToRemove.Count == 0)
+        {
+            return NotFound($"Nie znaleziono ćwiczenia '{decodedName}' w tej sesji.");
+        }
+
+        _context.ExerciseSetLogs.RemoveRange(setsToRemove);
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteSession(int id)
+    {
+        var session = await _context.WorkoutSessions.FindAsync(id);
+        if (session == null)
+        {
+            return NotFound($"Nie znaleziono sesji treningowej o ID {id}.");
+        }
+
+        _context.WorkoutSessions.Remove(session);
+        await _context.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpPost("{id:int}/finish")]
@@ -310,12 +357,15 @@ public class WorkoutSessionsController : ControllerBase
         foreach (var group in groups)
         {
             var firstSet = group.First();
+            var isCardio = firstSet.ExerciseType == "Cardio" || firstSet.MuscleGroup == "Cardio";
             var previousSets = await GetLastCompletedSetsForExerciseAsync(group.Key, excludeSessionId: session.Id);
 
             var setDtos = group.Select(s =>
             {
                 var prev = previousSets.FirstOrDefault(p => p.SetNumber == s.SetNumber);
-                var prevFormatted = prev != null ? $"{prev.Reps} x {prev.WeightKg}kg" : null;
+                var prevFormatted = prev != null
+                    ? (isCardio ? $"{prev.Reps} min @ {prev.WeightKg}%" : $"{prev.Reps} x {prev.WeightKg}kg")
+                    : null;
 
                 return new SetLogResponseDto(
                     Id: s.Id,
@@ -333,12 +383,14 @@ public class WorkoutSessionsController : ControllerBase
                 ExerciseOrder: firstSet.ExerciseOrder,
                 RestSeconds: firstSet.RestSeconds,
                 Notes: firstSet.Notes,
+                MuscleGroup: firstSet.MuscleGroup,
+                ExerciseType: firstSet.ExerciseType,
                 Sets: setDtos
             ));
         }
 
         var totalVolume = session.Sets
-            .Where(s => s.IsCompleted)
+            .Where(s => s.IsCompleted && s.ExerciseType != "Cardio" && s.MuscleGroup != "Cardio")
             .Sum(s => s.WeightKg * s.Reps);
 
         return new WorkoutSessionResponseDto(

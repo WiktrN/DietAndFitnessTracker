@@ -16,4 +16,6 @@ public class ExerciseSetLog
     public int Reps { get; set; }
     public bool IsCompleted { get; set; }
     public DateTime? CompletedAt { get; set; }
+    public string MuscleGroup { get; set; } = "Ogólne";
+    public string ExerciseType { get; set; } = "Strength";
 }

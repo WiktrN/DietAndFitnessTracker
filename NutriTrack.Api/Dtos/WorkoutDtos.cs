@@ -1,13 +1,13 @@
 ﻿namespace NutriTrack.Api.Dtos;
 
-// --- SZABLONY PLANÓW TRENINGOWYCH ---
-
 public record CreateTemplateExerciseDto(
     string ExerciseName,
     int OrderIndex,
     int TargetSets = 3,
     int RestSeconds = 120,
-    string? Notes = null
+    string? Notes = null,
+    string MuscleGroup = "Ogólne",
+    string ExerciseType = "Strength"
 );
 
 public record CreateWorkoutTemplateDto(
@@ -22,7 +22,9 @@ public record TemplateExerciseResponseDto(
     int OrderIndex,
     int TargetSets,
     int RestSeconds,
-    string? Notes
+    string? Notes,
+    string MuscleGroup,
+    string ExerciseType
 );
 
 public record WorkoutTemplateResponseDto(
@@ -31,8 +33,6 @@ public record WorkoutTemplateResponseDto(
     string? Description,
     List<TemplateExerciseResponseDto> Exercises
 );
-
-// --- AKTYWNA SESJA TRENINGOWA (LIVE WORKOUT) ---
 
 public record UpdateSetLogRequestDto(
     double WeightKg,
@@ -43,7 +43,9 @@ public record UpdateSetLogRequestDto(
 public record AddSetToSessionRequestDto(
     string ExerciseName,
     int RestSeconds = 120,
-    string? Notes = null
+    string? Notes = null,
+    string MuscleGroup = "Ogólne",
+    string ExerciseType = "Strength"
 );
 
 public record SetLogResponseDto(
@@ -61,6 +63,8 @@ public record SessionExerciseGroupDto(
     int ExerciseOrder,
     int RestSeconds,
     string? Notes,
+    string MuscleGroup,
+    string ExerciseType,
     List<SetLogResponseDto> Sets
 );
 

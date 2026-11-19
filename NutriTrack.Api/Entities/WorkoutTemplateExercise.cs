@@ -11,4 +11,6 @@ public class WorkoutTemplateExercise
     public int TargetSets { get; set; } = 3;
     public int RestSeconds { get; set; } = 120;
     public string? Notes { get; set; }
+    public string MuscleGroup { get; set; } = "Ogólne";
+    public string ExerciseType { get; set; } = "Strength"; // "Strength" lub "Cardio"
 }

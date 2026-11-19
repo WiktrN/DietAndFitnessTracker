@@ -33,8 +33,16 @@ namespace NutriTrack.Api.Migrations
                     b.Property<int>("ExerciseOrder")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ExerciseType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsCompleted")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("MuscleGroup")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Notes")
                         .HasColumnType("TEXT");
@@ -229,6 +237,14 @@ namespace NutriTrack.Api.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("ExerciseName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExerciseType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MuscleGroup")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
