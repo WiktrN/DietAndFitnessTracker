@@ -7,9 +7,19 @@ export interface EstimatedItem {
   fat: number;
 }
 
+export interface EstimatedMealResponse {
+  mealName: string;
+  totalCalories: number;
+  totalProtein: number;
+  totalCarbs: number;
+  totalFat: number;
+  items: EstimatedItem[];
+}
+
 export interface EstimatedAndLoggedMealResponse {
   mealLogId: number;
   date: string;
+  mealCategory: string;
   mealName: string;
   totalCalories: number;
   totalProtein: number;
@@ -27,6 +37,7 @@ export interface MealLogResponse {
   totalCarbs: number;
   totalFat: number;
   recipeId?: number | null;
+  mealCategory: string;
 }
 
 export interface GoalProgress {

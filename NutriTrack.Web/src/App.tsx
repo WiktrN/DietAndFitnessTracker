@@ -3,8 +3,9 @@ import { Utensils, ChefHat, Dumbbell } from 'lucide-react';
 import { NutritionTab } from './components/NutritionTab';
 import { RecipesTab } from './components/RecipesTab';
 import { WorkoutTab } from './components/WorkoutTab';
+import type { EstimatedAndLoggedMealResponse } from './types/api';
 
-type Tab = 'nutrition' | 'recipes' | 'workout';
+type Tab = 'recipes' | 'nutrition' | 'workout';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<Tab>('nutrition');
@@ -12,6 +13,8 @@ export function App() {
     new Date().toISOString().split('T')[0]
   );
   const [nutritionRefreshTrigger, setNutritionRefreshTrigger] = useState(0);
+  const [lastAiResult, setLastAiResult] =
+    useState<EstimatedAndLoggedMealResponse | null>(null);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -30,13 +33,6 @@ export function App() {
 
       {/* Główna treść */}
       <main className="flex-1 max-w-xl w-full mx-auto px-4 py-5 pb-24">
-        {activeTab === 'nutrition' && (
-          <NutritionTab
-            selectedDate={selectedDate}
-            onSelectDate={setSelectedDate}
-            refreshTrigger={nutritionRefreshTrigger}
-          />
-        )}
         {activeTab === 'recipes' && (
           <RecipesTab
             selectedDate={selectedDate}
@@ -46,24 +42,21 @@ export function App() {
             }}
           />
         )}
+        {activeTab === 'nutrition' && (
+          <NutritionTab
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            refreshTrigger={nutritionRefreshTrigger}
+            lastAiResult={lastAiResult}
+            setLastAiResult={setLastAiResult}
+          />
+        )}
         {activeTab === 'workout' && <WorkoutTab />}
       </main>
 
-      {/* Dolny pasek nawigacji z 3 zakładkami */}
+      {/* Dolny pasek nawigacji: Przepisy (lewo) • Dieta & AI (środek) • Trening (prawo) */}
       <nav className="fixed bottom-0 inset-x-0 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 z-20">
         <div className="max-w-xl mx-auto grid grid-cols-3">
-          <button
-            onClick={() => setActiveTab('nutrition')}
-            className={`flex flex-col items-center justify-center py-2.5 gap-1 text-xs font-semibold transition ${
-              activeTab === 'nutrition'
-                ? 'text-amber-400'
-                : 'text-zinc-500 hover:text-zinc-300'
-            }`}
-          >
-            <Utensils className="w-5 h-5" />
-            <span>Dieta & AI</span>
-          </button>
-
           <button
             onClick={() => setActiveTab('recipes')}
             className={`flex flex-col items-center justify-center py-2.5 gap-1 text-xs font-semibold transition ${
@@ -74,6 +67,18 @@ export function App() {
           >
             <ChefHat className="w-5 h-5" />
             <span>Przepisy</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('nutrition')}
+            className={`flex flex-col items-center justify-center py-2.5 gap-1 text-xs font-semibold transition ${
+              activeTab === 'nutrition'
+                ? 'text-amber-400'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <Utensils className="w-5 h-5" />
+            <span>Dieta & AI</span>
           </button>
 
           <button

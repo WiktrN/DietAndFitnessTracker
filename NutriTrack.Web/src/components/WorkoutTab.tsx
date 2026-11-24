@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dumbbell,
   Play,
@@ -13,6 +13,7 @@ import {
   ChevronUp,
   Pencil,
   AlertTriangle,
+  Calendar as CalendarIcon,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { playRestFinishedSound } from '../utils/sound';
@@ -29,24 +30,49 @@ const MUSCLE_GROUPS = [
   'Cardio',
 ];
 
+const MONTHS_PL = [
+  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
+];
+
 export function WorkoutTab() {
+  const today = useMemo(() => new Date(), []);
+  const todayIso = today.toISOString().split('T')[0];
+
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
   const [history, setHistory] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Kalendarz odbytych treningów
+  const [calYear, setCalYear] = useState(today.getFullYear());
+  const [calMonth, setCalMonth] = useState(today.getMonth());
+  const [workoutDates, setWorkoutDates] = useState<Set<string>>(new Set());
+  const [showWorkoutCalendar, setShowWorkoutCalendar] = useState(false);
+
   // Rozwijane podglądy planów oraz szczegółów historycznych treningów
   const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
   const [expandedHistoryId, setExpandedHistoryId] = useState<number | null>(null);
 
+  // Tryb edycji serii (chroni przed przypadkowym usunięciem serii palcem)
+  const [editingSetsExercises, setEditingSetsExercises] = useState<Record<string, boolean>>({});
+
+  // Dopisywanie zapomnianego ćwiczenia do ukończonego treningu w historii
+  const [addingToHistorySessionId, setAddingToHistorySessionId] = useState<number | null>(null);
+  const [historyNewSetForm, setHistoryNewSetForm] = useState({
+    exerciseName: '',
+    muscleGroup: 'Plecy',
+    exerciseType: 'Strength' as 'Strength' | 'Cardio',
+    reps: 10,
+    weightKg: 40,
+  });
+
   // Potwierdzenie zakończenia przy nieodhaczonych seriach
   const [unfinishedWarningCount, setUnfinishedWarningCount] = useState<number | null>(null);
 
-  // Stoper całego treningu
+  // Stoper treningu i timer przerwy
   const [elapsedWorkoutSeconds, setElapsedWorkoutSeconds] = useState(0);
-
-  // Timer przerwy między seriami
   const [restRemaining, setRestRemaining] = useState<number>(0);
   const [restTotal, setRestTotal] = useState<number>(0);
   const [restExerciseName, setRestExerciseName] = useState<string>('');
@@ -71,12 +97,14 @@ export function WorkoutTab() {
     try {
       setLoading(true);
       setError(null);
-      const [tpls, hist] = await Promise.all([
+      const [tpls, hist, dates] = await Promise.all([
         api.getWorkoutTemplates(),
-        api.getWorkoutHistory(10),
+        api.getWorkoutHistory(15),
+        api.getMonthlyWorkoutDates(calYear, calMonth + 1).catch(() => [] as string[]),
       ]);
       setTemplates(tpls);
       setHistory(hist);
+      setWorkoutDates(new Set(dates));
 
       try {
         const active = await api.getActiveSession();
@@ -93,7 +121,7 @@ export function WorkoutTab() {
 
   useEffect(() => {
     loadInitialData();
-  }, []);
+  }, [calYear, calMonth]);
 
   useEffect(() => {
     if (!activeSession) {
@@ -350,6 +378,26 @@ export function WorkoutTab() {
     }
   };
 
+  const handleAddSetToCompletedHistory = async (e: React.FormEvent, sessionId: number) => {
+    e.preventDefault();
+    if (!historyNewSetForm.exerciseName.trim()) return;
+
+    try {
+      await api.addCompletedSetToHistory(sessionId, {
+        exerciseName: historyNewSetForm.exerciseName.trim(),
+        muscleGroup: historyNewSetForm.muscleGroup,
+        exerciseType: historyNewSetForm.exerciseType,
+        reps: Number(historyNewSetForm.reps) || 0,
+        weightKg: Number(historyNewSetForm.weightKg) || 0,
+      });
+      setHistoryNewSetForm((prev) => ({ ...prev, exerciseName: '' }));
+      setAddingToHistorySessionId(null);
+      await loadInitialData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się dopisać ćwiczenia.');
+    }
+  };
+
   const handleDeleteHistorySession = async (sessionId: number) => {
     try {
       await api.deleteWorkoutSession(sessionId);
@@ -364,6 +412,18 @@ export function WorkoutTab() {
     const secs = totalSec % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const daysInCalMonth = useMemo(() => {
+    const count = new Date(calYear, calMonth + 1, 0).getDate();
+    return Array.from({ length: count }, (_, i) => {
+      const dayNum = i + 1;
+      const iso = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(dayNum).padStart(
+        2,
+        '0'
+      )}`;
+      return { dayNum, iso };
+    });
+  }, [calYear, calMonth]);
 
   // --- WIDOK AKTYWNEGO TRENINGU ---
   if (activeSession) {
@@ -383,20 +443,19 @@ export function WorkoutTab() {
             <button
               onClick={playRestFinishedSound}
               className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-400 hover:text-amber-400"
-              title="Testuj dźwięk timera"
+              title="Testuj gong przerwy"
             >
               <Volume2 className="w-4 h-4" />
             </button>
             <button
               onClick={handleFinishClick}
-              className="bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-sm px-5 py-2 rounded-xl shadow-lg shadow-amber-500/10 transition"
+              className="bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-sm px-4 py-2 rounded-xl shadow-lg shadow-amber-500/10 transition"
             >
-              Finish
+              Zakończ trening
             </button>
           </div>
         </div>
 
-        {/* Ostrzeżenie przy próbie zakończenia treningu z nieodhaczonymi seriami */}
         {unfinishedWarningCount !== null && (
           <div className="bg-amber-950/60 border border-amber-500/60 rounded-2xl p-4 space-y-3">
             <div className="flex items-start gap-2.5">
@@ -437,6 +496,7 @@ export function WorkoutTab() {
         {activeSession.exercises.map((exercise) => {
           const isCardio =
             exercise.exerciseType === 'Cardio' || exercise.muscleGroup === 'Cardio';
+          const isEditingSets = !!editingSetsExercises[exercise.exerciseName];
 
           return (
             <div
@@ -457,7 +517,7 @@ export function WorkoutTab() {
                     {exercise.restSeconds > 0 && (
                       <span className="inline-flex items-center gap-1 text-xs bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-md font-medium">
                         <Timer className="w-3 h-3" />
-                        {Math.round(exercise.restSeconds / 60)}m ({exercise.restSeconds}s)
+                        {Math.round(exercise.restSeconds / 60)} min ({exercise.restSeconds}s)
                       </span>
                     )}
                     {exercise.notes && (
@@ -466,26 +526,50 @@ export function WorkoutTab() {
                   </div>
                 </div>
 
+                {/* Przycisk trybu edycji serii (chroni przed przypadkowym usunięciem) */}
                 <button
-                  onClick={() => handleRemoveExerciseFromSession(exercise.exerciseName)}
-                  className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition"
-                  title="Usuń całe ćwiczenie z dzisiejszego treningu"
+                  type="button"
+                  onClick={() =>
+                    setEditingSetsExercises((prev) => ({
+                      ...prev,
+                      [exercise.exerciseName]: !prev[exercise.exerciseName],
+                    }))
+                  }
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                    isEditingSets
+                      ? 'bg-amber-500 text-zinc-950'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                  }`}
                 >
-                  <Trash2 className="w-4 h-4" />
+                  {isEditingSets ? 'Gotowe' : 'Edytuj serie'}
                 </button>
               </div>
 
+              {isEditingSets && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveExerciseFromSession(exercise.exerciseName)}
+                    className="inline-flex items-center gap-1 text-[11px] text-red-400 hover:underline"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Usuń całe ćwiczenie z dzisiejszego treningu
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-12 gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-1 pt-1">
-                <div className="col-span-1 text-center">#</div>
-                <div className="col-span-4 text-center">Previous</div>
+                <div className="col-span-1 text-center">Seria</div>
+                <div className="col-span-4 text-center">Poprzednio</div>
                 <div className="col-span-2 text-center">
-                  {isCardio ? 'Czas (m)' : 'Reps'}
+                  {isCardio ? 'Czas (m)' : 'Powt.'}
+                </div>
+                <div className="col-span-3 text-center">
+                  {isCardio ? 'Nachyl. %' : 'Ciężar (kg)'}
                 </div>
                 <div className="col-span-2 text-center">
-                  {isCardio ? 'Nachyl. %' : 'KG'}
+                  {isEditingSets ? 'Usuń' : 'Zalicz'}
                 </div>
-                <div className="col-span-2 text-center">✓</div>
-                <div className="col-span-1 text-center"></div>
               </div>
 
               <div className="space-y-1.5">
@@ -493,6 +577,7 @@ export function WorkoutTab() {
                   <SetRow
                     key={set.id}
                     set={set}
+                    isEditing={isEditingSets}
                     onToggle={(w, r) =>
                       handleToggleSet(
                         set,
@@ -519,7 +604,7 @@ export function WorkoutTab() {
                 className="w-full py-2 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-300 flex items-center justify-center gap-1.5 transition"
               >
                 <Plus className="w-3.5 h-3.5" />
-                Add Set
+                Dodaj serię
               </button>
             </div>
           );
@@ -574,24 +659,74 @@ export function WorkoutTab() {
     );
   }
 
-  // --- WIDOK PLANÓW TRENINGOWYCH I HISTORII ---
+  // --- WIDOK PLANÓW TRENINGOWYCH, KALENDARZA TRENINGÓW I HISTORII ---
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-bold text-white flex items-center gap-2">
           <Dumbbell className="w-5 h-5 text-amber-400" />
           Plany treningowe
         </h2>
-        <button
-          onClick={openNewPlanForm}
-          className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition"
-        >
-          <Plus className="w-4 h-4" />
-          Nowy plan
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowWorkoutCalendar(!showWorkoutCalendar)}
+            className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs px-3 py-2 rounded-xl transition"
+          >
+            <CalendarIcon className="w-4 h-4 text-amber-400" />
+            Kalendarz
+          </button>
+          <button
+            onClick={openNewPlanForm}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition"
+          >
+            <Plus className="w-4 h-4" />
+            Nowy plan
+          </button>
+        </div>
       </div>
 
-      {/* Kreator / Edytor planu treningowego (tylko 1 przycisk Anuluj) */}
+      {/* Kalendarz odbytych treningów */}
+      {showWorkoutCalendar && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-400">
+              Dni z wykonanym treningiem ({MONTHS_PL[calMonth]} {calYear})
+            </span>
+            <select
+              value={calMonth}
+              onChange={(e) => setCalMonth(Number(e.target.value))}
+              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-xs"
+            >
+              {MONTHS_PL.map((m, i) => (
+                <option key={m} value={i}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1.5">
+            {daysInCalMonth.map(({ dayNum, iso }) => {
+              const trained = workoutDates.has(iso);
+              const isToday = iso === todayIso;
+              return (
+                <div
+                  key={iso}
+                  className={`py-1.5 rounded-lg text-center text-xs font-semibold ${
+                    trained
+                      ? 'bg-emerald-500/25 border border-emerald-500/60 text-emerald-300'
+                      : 'bg-zinc-950/70 text-zinc-500'
+                  } ${isToday ? 'ring-1 ring-amber-400' : ''}`}
+                >
+                  {dayNum}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Kreator / Edytor planu treningowego */}
       {showPlanForm && (
         <form
           onSubmit={handleSavePlan}
@@ -629,7 +764,6 @@ export function WorkoutTab() {
                         setPlanExercises(planExercises.filter((_, i) => i !== idx))
                       }
                       className="text-zinc-500 hover:text-red-400 p-1"
-                      title="Usuń to ćwiczenie"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -779,7 +913,7 @@ export function WorkoutTab() {
         </form>
       )}
 
-      {/* Lista szablonów z rozwijanym podglądem i edycją */}
+      {/* Lista szablonów */}
       {loading ? (
         <div className="text-center py-8 text-zinc-500 text-sm">Ładowanie planów...</div>
       ) : templates.length === 0 ? (
@@ -868,7 +1002,7 @@ export function WorkoutTab() {
         </div>
       )}
 
-      {/* Ostatnie treningi ze szczegółowym podglądem wykonanych serii, powtórzeń i ciężarów */}
+      {/* Ostatnie treningi (z możliwością dopisania zapomnianego ćwiczenia) */}
       {history.length > 0 && (
         <div className="space-y-2.5 pt-2">
           <h3 className="text-sm font-semibold text-zinc-400 flex items-center gap-1.5 px-1">
@@ -974,6 +1108,112 @@ export function WorkoutTab() {
                         </div>
                       );
                     })}
+
+                    {/* Formularz dopisania zapomnianego ćwiczenia / serii do ukończonego treningu */}
+                    {addingToHistorySessionId === session.id ? (
+                      <form
+                        onSubmit={(e) => handleAddSetToCompletedHistory(e, session.id)}
+                        className="pt-2 border-t border-zinc-800 space-y-2"
+                      >
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <input
+                            type="text"
+                            value={historyNewSetForm.exerciseName}
+                            onChange={(e) =>
+                              setHistoryNewSetForm({
+                                ...historyNewSetForm,
+                                exerciseName: e.target.value,
+                              })
+                            }
+                            placeholder="Nazwa ćwiczenia (np. Face Pull)"
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs"
+                          />
+                          <select
+                            value={historyNewSetForm.muscleGroup}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setHistoryNewSetForm({
+                                ...historyNewSetForm,
+                                muscleGroup: val,
+                                exerciseType: val === 'Cardio' ? 'Cardio' : 'Strength',
+                              });
+                            }}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs"
+                          >
+                            {MUSCLE_GROUPS.map((mg) => (
+                              <option key={mg} value={mg}>
+                                {mg}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div>
+                            <span className="block text-[10px] text-zinc-500">
+                              {historyNewSetForm.exerciseType === 'Cardio'
+                                ? 'Czas (min)'
+                                : 'Powtórzenia'}
+                            </span>
+                            <input
+                              type="number"
+                              value={historyNewSetForm.reps}
+                              onChange={(e) =>
+                                setHistoryNewSetForm({
+                                  ...historyNewSetForm,
+                                  reps: Number(e.target.value),
+                                })
+                              }
+                              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-center text-xs"
+                            />
+                          </div>
+                          <div>
+                            <span className="block text-[10px] text-zinc-500">
+                              {historyNewSetForm.exerciseType === 'Cardio'
+                                ? 'Nachylenie %'
+                                : 'Ciężar (kg)'}
+                            </span>
+                            <input
+                              type="number"
+                              step="0.5"
+                              value={historyNewSetForm.weightKg}
+                              onChange={(e) =>
+                                setHistoryNewSetForm({
+                                  ...historyNewSetForm,
+                                  weightKg: Number(e.target.value),
+                                })
+                              }
+                              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-center text-xs"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAddingToHistorySessionId(null)}
+                            className="text-xs text-zinc-400 hover:text-white px-2 py-1"
+                          >
+                            Anuluj
+                          </button>
+                          <button
+                            type="submit"
+                            className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3 py-1 rounded-lg"
+                          >
+                            Dopisz serię
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setAddingToHistorySessionId(session.id)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:underline pt-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Dopisz zapomniane ćwiczenie / serię
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -987,10 +1227,12 @@ export function WorkoutTab() {
 
 function SetRow({
   set,
+  isEditing,
   onToggle,
   onDelete,
 }: {
   set: SetLog;
+  isEditing: boolean;
   onToggle: (weightKg: number, reps: number) => void;
   onDelete: () => void;
 }) {
@@ -1018,7 +1260,7 @@ function SetRow({
           className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-center text-sm font-semibold text-white focus:outline-none focus:border-amber-500"
         />
       </div>
-      <div className="col-span-2">
+      <div className="col-span-3">
         <input
           type="number"
           step="0.5"
@@ -1029,25 +1271,28 @@ function SetRow({
         />
       </div>
       <div className="col-span-2 flex justify-center">
-        <button
-          onClick={() => onToggle(Number(weight) || 0, Number(reps) || 0)}
-          className={`w-8 h-8 rounded-lg flex items-center justify-center transition ${
-            set.isCompleted
-              ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20'
-              : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
-          }`}
-        >
-          <Check className="w-4 h-4 stroke-[3]" />
-        </button>
-      </div>
-      <div className="col-span-1 flex justify-center">
-        <button
-          onClick={onDelete}
-          className="p-1 text-zinc-600 hover:text-red-400 transition"
-          title="Usuń serię"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        {isEditing ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="w-8 h-8 rounded-lg bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white flex items-center justify-center transition"
+            title="Usuń tę serię"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onToggle(Number(weight) || 0, Number(reps) || 0)}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition ${
+              set.isCompleted
+                ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+            }`}
+          >
+            <Check className="w-4 h-4 stroke-[3]" />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import type {
   DailyNutritionSummary,
   EstimatedAndLoggedMealResponse,
   EstimatedItem,
+  EstimatedMealResponse,
   MealLogResponse,
   RecipeResponse,
   SetLog,
@@ -41,10 +42,30 @@ export const api = {
   getMonthlyCalendarStatus: (year: number, month: number) =>
     request<DailyCalendarStatus[]>(`/MealLogs/monthly-status?year=${year}&month=${month}`),
 
-  estimateAndLogMeal: (text: string, date?: string) =>
+  estimateMealOnly: (text: string) =>
+    request<EstimatedMealResponse>('/Nutrition/estimate', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  estimateAndLogMeal: (text: string, date?: string, mealCategory = 'Śniadanie') =>
     request<EstimatedAndLoggedMealResponse>('/Nutrition/estimate-and-log', {
       method: 'POST',
-      body: JSON.stringify({ text, date: date ?? null }),
+      body: JSON.stringify({ text, date: date ?? null, mealCategory }),
+    }),
+
+  logManualMeal: (meal: {
+    mealName: string;
+    totalCalories: number;
+    totalProtein: number;
+    totalCarbs: number;
+    totalFat: number;
+    date?: string;
+    mealCategory: string;
+  }) =>
+    request<MealLogResponse>('/MealLogs', {
+      method: 'POST',
+      body: JSON.stringify(meal),
     }),
 
   deleteMealLog: (id: number) =>
@@ -55,6 +76,7 @@ export const api = {
     targetProtein: number;
     targetCarbs: number;
     targetFat: number;
+    effectiveFrom?: string;
   }) =>
     request('/Goals', {
       method: 'PUT',
@@ -84,6 +106,29 @@ export const api = {
       body: JSON.stringify(recipe),
     }),
 
+  updateRecipe: (
+    id: number,
+    recipe: {
+      name: string;
+      description?: string;
+      instructions?: string;
+      servings: number;
+      ingredients: {
+        name: string;
+        amountInGrams: number;
+        calories: number;
+        protein: number;
+        carbs: number;
+        fat: number;
+        sectionName?: string;
+      }[];
+    }
+  ) =>
+    request<RecipeResponse>(`/Recipes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(recipe),
+    }),
+
   createRecipeFromAi: (payload: {
     name: string;
     description?: string;
@@ -99,17 +144,13 @@ export const api = {
   deleteRecipe: (id: number) =>
     request<void>(`/Recipes/${id}`, { method: 'DELETE' }),
 
-  logMealFromRecipe: (recipeId: number, servingsConsumed: number) =>
-    request<MealLogResponse>(`/MealLogs/from-recipe/${recipeId}`, {
-      method: 'POST',
-      body: JSON.stringify({ servingsConsumed }),
-    }),
-
   logMealFromRecipeCustom: (
     recipeId: number,
     payload: {
-      servingsConsumed: number;
+      weightOnPlateGrams?: number;
+      servingsConsumed?: number;
       date?: string;
+      mealCategory: string;
       ingredientOverrides?: { ingredientId: number; customAmountInGrams: number }[];
     }
   ) =>
@@ -204,6 +245,24 @@ export const api = {
 
   deleteWorkoutSession: (sessionId: number) =>
     request<void>(`/WorkoutSessions/${sessionId}`, { method: 'DELETE' }),
+
+  getMonthlyWorkoutDates: (year: number, month: number) =>
+    request<string[]>(`/WorkoutSessions/monthly-dates?year=${year}&month=${month}`),
+
+  addCompletedSetToHistory: (
+    sessionId: number,
+    payload: {
+      exerciseName: string;
+      muscleGroup: string;
+      exerciseType: 'Strength' | 'Cardio';
+      reps: number;
+      weightKg: number;
+    }
+  ) =>
+    request<WorkoutSession>(`/WorkoutSessions/${sessionId}/history-sets`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   getWorkoutHistory: (limit = 10) =>
     request<WorkoutSession[]>(`/WorkoutSessions/history?limit=${limit}`),
