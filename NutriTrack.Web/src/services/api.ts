@@ -264,6 +264,23 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  getWorkoutHistory: (limit = 10) =>
-    request<WorkoutSession[]>(`/WorkoutSessions/history?limit=${limit}`),
+  getWorkoutHistory: (year?: number, month?: number, limit = 30) => {
+    const params = new URLSearchParams();
+    if (year) params.set('year', String(year));
+    if (month) params.set('month', String(month));
+    params.set('limit', String(limit));
+    return request<WorkoutSession[]>(`/WorkoutSessions/history?${params.toString()}`);
+  },
+
+  reorderWorkoutTemplates: (orderedIds: number[]) =>
+    request<void>('/WorkoutTemplates/reorder', {
+      method: 'PUT',
+      body: JSON.stringify(orderedIds),
+    }),
+
+  reorderRecipes: (orderedIds: number[]) =>
+    request<void>('/Recipes/reorder', {
+      method: 'PUT',
+      body: JSON.stringify(orderedIds),
+    }),
 };

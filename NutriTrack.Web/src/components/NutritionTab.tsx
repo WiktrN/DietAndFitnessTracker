@@ -9,7 +9,6 @@ import {
   ChevronRight,
   BookmarkPlus,
   Plus,
-  PenLine,
   X,
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -55,12 +54,25 @@ export function NutritionTab({
   const [showCalendarGrid, setShowCalendarGrid] = useState<boolean>(false);
   const [monthStatuses, setMonthStatuses] = useState<Record<string, DailyCalendarStatus>>({});
 
+  // Elastyczne lata w kalendarzu (zawsze od 2026 do obecnego + 1)
+  const availableYears = useMemo(() => {
+    const maxYear = Math.max(today.getFullYear() + 1, 2027);
+    const years: number[] = [];
+    for (let y = 2026; y <= maxYear; y++) years.push(y);
+    return years;
+  }, [today]);
+
   const [summary, setSummary] = useState<DailyNutritionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Aktywny formularz przypisany do konkretnej pory dnia (jak w Fitatu: '+' lub 'AI')
+  const [activeEntryMode, setActiveEntryMode] = useState<{
+    category: string;
+    mode: 'ai' | 'manual';
+  } | null>(null);
+
   // Tabelaryczny formularz AI
-  const [aiMealCategory, setAiMealCategory] = useState<string>('Śniadanie');
   const [tableRows, setTableRows] = useState<TableMealRow[]>([
     { amount: '', unit: 'g', productName: '' },
   ]);
@@ -72,8 +84,7 @@ export function NutritionTab({
   const [aiRecipeServings, setAiRecipeServings] = useState(1);
   const [aiRecipeSavedMsg, setAiRecipeSavedMsg] = useState(false);
 
-  // Ręczne dopisywanie pojedynczego produktu (bez AI)
-  const [manualCategory, setManualCategory] = useState<string | null>(null);
+  // Formularz ręczny (+)
   const [manualForm, setManualForm] = useState({
     mealName: '',
     totalCalories: 0,
@@ -82,7 +93,7 @@ export function NutritionTab({
     totalFat: 0,
   });
 
-  // Edycja celów (z wyborem daty od kiedy obowiązuje)
+  // Edycja celów
   const [showGoalEditor, setShowGoalEditor] = useState(false);
   const [goalForm, setGoalForm] = useState({
     targetCalories: 2450,
@@ -160,7 +171,26 @@ export function NutritionTab({
     setCalendarMonth(current.getMonth());
   };
 
-  const handleAiTableSubmit = async (e: React.FormEvent) => {
+  const toggleEntryMode = (category: string, mode: 'ai' | 'manual') => {
+    if (activeEntryMode?.category === category && activeEntryMode?.mode === mode) {
+      setActiveEntryMode(null);
+      return;
+    }
+    setActiveEntryMode({ category, mode });
+    if (mode === 'ai') {
+      setTableRows([{ amount: '', unit: 'g', productName: '' }]);
+    } else {
+      setManualForm({
+        mealName: '',
+        totalCalories: 0,
+        totalProtein: 0,
+        totalCarbs: 0,
+        totalFat: 0,
+      });
+    }
+  };
+
+  const handleAiTableSubmit = async (e: React.FormEvent, category: string) => {
     e.preventDefault();
     const validRows = tableRows.filter((r) => r.productName.trim() !== '');
     if (validRows.length === 0) return;
@@ -178,10 +208,11 @@ export function NutritionTab({
       setAiRecipeSavedMsg(false);
       setShowSaveAiRecipe(false);
       const isoDate = `${selectedDate}T12:00:00Z`;
-      const result = await api.estimateAndLogMeal(combinedText, isoDate, aiMealCategory);
+      const result = await api.estimateAndLogMeal(combinedText, isoDate, category);
       setLastAiResult(result);
       setAiRecipeName(result.mealName);
       setTableRows([{ amount: '', unit: 'g', productName: '' }]);
+      setActiveEntryMode(null);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Błąd przetwarzania AI.');
@@ -190,9 +221,9 @@ export function NutritionTab({
     }
   };
 
-  const handleManualSubmit = async (e: React.FormEvent) => {
+  const handleManualSubmit = async (e: React.FormEvent, category: string) => {
     e.preventDefault();
-    if (!manualCategory || !manualForm.mealName.trim()) return;
+    if (!manualForm.mealName.trim()) return;
 
     try {
       await api.logManualMeal({
@@ -202,16 +233,9 @@ export function NutritionTab({
         totalCarbs: Number(manualForm.totalCarbs) || 0,
         totalFat: Number(manualForm.totalFat) || 0,
         date: `${selectedDate}T12:00:00Z`,
-        mealCategory: manualCategory,
+        mealCategory: category,
       });
-      setManualCategory(null);
-      setManualForm({
-        mealName: '',
-        totalCalories: 0,
-        totalProtein: 0,
-        totalCarbs: 0,
-        totalFat: 0,
-      });
+      setActiveEntryMode(null);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zapisać produktu.');
@@ -257,20 +281,11 @@ export function NutritionTab({
 
   const progress = summary?.goalProgress;
 
-  // Grupowanie posiłków według pory dnia (Śniadanie, Obiad, Kolacja, Przekąska + ewentualne inne)
   const groupedMeals = useMemo(() => {
     const meals = summary?.meals ?? [];
-    const allCategories = [...MEAL_CATEGORIES] as string[];
-    meals.forEach((m) => {
-      const cat = m.mealCategory || 'Śniadanie';
-      if (!allCategories.includes(cat)) {
-        allCategories.push(cat);
-      }
-    });
-
-    return allCategories.map((cat) => {
+    return MEAL_CATEGORIES.map((cat) => {
       const items = meals.filter(
-        (m) => (m.mealCategory || 'Posiłek').toLowerCase() === cat.toLowerCase()
+        (m) => (m.mealCategory || '').toLowerCase() === cat.toLowerCase()
       );
       return {
         category: cat,
@@ -283,7 +298,6 @@ export function NutritionTab({
     });
   }, [summary]);
 
-  // Wpisy bez przypisanej standardowej kategorii (stare wpisy przed migracją)
   const uncategorizedMeals = useMemo(() => {
     const meals = summary?.meals ?? [];
     return meals.filter(
@@ -295,15 +309,14 @@ export function NutritionTab({
   }, [summary]);
 
   return (
-    <div className="space-y-5">
-      {/* Nawigacja kalendarza + przycisk celu */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5 space-y-3">
+    <div className="space-y-4">
+      {/* Pasek daty + Cel */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={() => shiftDay(-1)}
               className="p-2 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300"
-              title="Poprzedni dzień"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -316,7 +329,6 @@ export function NutritionTab({
             <button
               onClick={() => shiftDay(1)}
               className="p-2 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300"
-              title="Następny dzień"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -327,28 +339,28 @@ export function NutritionTab({
                   setCalendarYear(today.getFullYear());
                   setCalendarMonth(today.getMonth());
                 }}
-                className="px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-xs font-semibold rounded-xl transition"
+                className="px-2.5 py-1.5 bg-amber-500/15 text-amber-400 text-xs font-semibold rounded-xl"
               >
-                Wróć do dziś
+                Dziś
               </button>
             )}
           </div>
 
           <button
             onClick={() => setShowGoalEditor(!showGoalEditor)}
-            className="flex items-center gap-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 rounded-xl transition"
+            className="flex items-center gap-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 rounded-xl transition"
           >
             <Target className="w-4 h-4 text-amber-400" />
             Cel
           </button>
         </div>
 
-        {/* Rozwijany kalendarz z podświetleniem dzisiejszego dnia oraz kolorami makro */}
+        {/* Rozwijany kalendarz */}
         {showCalendarGrid && (
           <div className="pt-2 border-t border-zinc-800 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex gap-1.5">
-                {[today.getFullYear(), today.getFullYear() + 1].map((yr) => (
+              <div className="flex gap-1.5 flex-wrap">
+                {availableYears.map((yr) => (
                   <button
                     key={yr}
                     onClick={() => setCalendarYear(yr)}
@@ -358,7 +370,7 @@ export function NutritionTab({
                         : 'bg-zinc-950 text-zinc-400 hover:text-white'
                     }`}
                   >
-                    Rok {yr}
+                    {yr}
                   </button>
                 ))}
               </div>
@@ -393,7 +405,7 @@ export function NutritionTab({
                 if (isSelected) {
                   colorClass += ' ring-2 ring-amber-400';
                 } else if (isToday) {
-                  colorClass += ' ring-1 ring-amber-400/70 font-extrabold text-amber-300';
+                  colorClass += ' ring-1 ring-amber-400/80 font-extrabold text-amber-300';
                 }
 
                 return (
@@ -403,14 +415,7 @@ export function NutritionTab({
                       onSelectDate(iso);
                       setShowCalendarGrid(false);
                     }}
-                    title={
-                      isToday
-                        ? 'Dzisiaj'
-                        : statusInfo && statusInfo.totalCalories > 0
-                        ? `${statusInfo.totalCalories} / ${statusInfo.targetCalories} kcal`
-                        : 'Brak wpisów'
-                    }
-                    className={`relative py-1.5 rounded-lg text-xs font-semibold transition ${colorClass}`}
+                    className={`relative py-2 rounded-lg text-xs font-semibold transition ${colorClass}`}
                   >
                     {dayNum}
                     {isToday && (
@@ -427,32 +432,28 @@ export function NutritionTab({
                 Dzisiaj
               </span>
               <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-sm bg-zinc-800 inline-block" />
-                Brak
-              </span>
-              <span className="flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded-sm bg-sky-500/40 border border-sky-500 inline-block" />
                 Uzupełnione
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/40 border border-emerald-500 inline-block" />
-                Idealne makro (±5%)
+                Idealne makro
               </span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Edytor celów makro (z wyborem daty obowiązywania) */}
+      {/* Edytor celów makro */}
       {showGoalEditor && (
         <form
           onSubmit={handleSaveGoal}
           className="bg-zinc-900 border border-amber-500/30 rounded-2xl p-4 space-y-3"
         >
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <h3 className="text-sm font-semibold text-amber-400">Dzienny cel makroskładników</h3>
             <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-zinc-400">Obowiązuje od:</span>
+              <span className="text-zinc-400">Od dnia:</span>
               <input
                 type="date"
                 value={goalForm.effectiveFrom}
@@ -463,7 +464,7 @@ export function NutritionTab({
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Kalorie (kcal)</label>
+              <label className="block text-xs text-zinc-400 mb-1">Kalorie</label>
               <input
                 type="number"
                 value={goalForm.targetCalories}
@@ -485,7 +486,7 @@ export function NutritionTab({
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Węglowodany (g)</label>
+              <label className="block text-xs text-zinc-400 mb-1">Węgle (g)</label>
               <input
                 type="number"
                 value={goalForm.targetCarbs}
@@ -517,7 +518,7 @@ export function NutritionTab({
             </button>
             <button
               type="submit"
-              className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm px-4 py-2 rounded-xl transition"
+              className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm px-4 py-2 rounded-xl"
             >
               Zapisz cele
             </button>
@@ -526,42 +527,40 @@ export function NutritionTab({
       )}
 
       {error && (
-        <div className="bg-red-950/60 border border-red-800 text-red-200 text-sm rounded-2xl p-3.5">
+        <div className="bg-red-950/60 border border-red-800 text-red-200 text-xs rounded-2xl p-3">
           {error}
         </div>
       )}
 
       {/* Karta bilansu dnia */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3.5">
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-xs uppercase tracking-wider text-zinc-400">Spożyte w całym dniu</p>
-            <p className="text-3xl font-bold text-white mt-0.5">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-400">Bilans dnia</p>
+            <p className="text-2xl sm:text-3xl font-bold text-white mt-0.5">
               {summary?.totalCalories ?? 0}{' '}
-              <span className="text-base font-normal text-zinc-400">
+              <span className="text-sm font-normal text-zinc-400">
                 {progress ? `/ ${progress.targetCalories} kcal` : 'kcal'}
               </span>
             </p>
           </div>
           {progress && (
-            <div className="text-right">
-              <span
-                className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                  progress.remainingCalories >= 0
-                    ? 'bg-emerald-500/15 text-emerald-400'
-                    : 'bg-red-500/15 text-red-400'
-                }`}
-              >
-                {progress.remainingCalories >= 0
-                  ? `Zostało ${progress.remainingCalories} kcal`
-                  : `Nadwyżka ${Math.abs(progress.remainingCalories)} kcal`}
-              </span>
-            </div>
+            <span
+              className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                progress.remainingCalories >= 0
+                  ? 'bg-emerald-500/15 text-emerald-400'
+                  : 'bg-red-500/15 text-red-400'
+              }`}
+            >
+              {progress.remainingCalories >= 0
+                ? `Zostało ${progress.remainingCalories} kcal`
+                : `Nadwyżka ${Math.abs(progress.remainingCalories)} kcal`}
+            </span>
           )}
         </div>
 
         {progress && (
-          <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
             <div
               className="h-full bg-amber-400 rounded-full transition-all duration-500"
               style={{ width: `${Math.min(progress.caloriesPercentage, 100)}%` }}
@@ -569,7 +568,7 @@ export function NutritionTab({
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-3 pt-1">
+        <div className="grid grid-cols-3 gap-2.5">
           <MacroBox
             label="Białko"
             current={summary?.totalProtein ?? 0}
@@ -594,141 +593,14 @@ export function NutritionTab({
         </div>
       </div>
 
-      {/* Tabelaryczny formularz AI */}
-      <form
-        onSubmit={handleAiTableSubmit}
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3"
-      >
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2 text-sm font-semibold text-amber-400">
-            <Sparkles className="w-4 h-4" />
-            <span>Dodaj posiłek (AI + etykiety)</span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-zinc-400">Posiłek dnia:</span>
-            <select
-              value={aiMealCategory}
-              onChange={(e) => setAiMealCategory(e.target.value)}
-              className="bg-zinc-950 border border-zinc-700 rounded-xl px-2.5 py-1 text-xs font-semibold text-amber-400"
-            >
-              {MEAL_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Nagłówki tabeli składników */}
-        <div className="grid grid-cols-12 gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 px-0.5">
-          <div className="col-span-4">Ilość (g / ml)</div>
-          <div className="col-span-7">Nazwa produktu i firma</div>
-          <div className="col-span-1"></div>
-        </div>
-
-        <div className="space-y-2">
-          {tableRows.map((row, idx) => (
-            <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
-              <div className="col-span-4 flex">
-                <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={row.amount}
-                  onChange={(e) => {
-                    const copy = [...tableRows];
-                    copy[idx].amount = e.target.value;
-                    setTableRows(copy);
-                  }}
-                  placeholder="200"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-l-xl px-2 py-2 text-xs text-center text-white focus:outline-none focus:border-amber-500"
-                />
-                <select
-                  value={row.unit}
-                  onChange={(e) => {
-                    const copy = [...tableRows];
-                    copy[idx].unit = e.target.value as 'g' | 'ml';
-                    setTableRows(copy);
-                  }}
-                  className="bg-zinc-950 border-y border-r border-zinc-800 rounded-r-xl px-1.5 py-2 text-xs text-zinc-400"
-                >
-                  <option value="g">g</option>
-                  <option value="ml">ml</option>
-                </select>
-              </div>
-
-              <div className={tableRows.length > 1 ? 'col-span-7' : 'col-span-8'}>
-                <input
-                  type="text"
-                  value={row.productName}
-                  onChange={(e) => {
-                    const copy = [...tableRows];
-                    copy[idx].productName = e.target.value;
-                    setTableRows(copy);
-                  }}
-                  placeholder="np. Serek wiejski wysokobiałkowy Piątnica"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              {tableRows.length > 1 && (
-                <div className="col-span-1 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => setTableRows(tableRows.filter((_, i) => i !== idx))}
-                    className="p-1.5 text-zinc-500 hover:text-red-400 transition"
-                    title="Usuń pozycję"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="flex items-center justify-between pt-0.5">
-          <button
-            type="button"
-            onClick={() =>
-              setTableRows([...tableRows, { amount: '', unit: 'g', productName: '' }])
-            }
-            className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:underline"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Dodaj kolejny składnik posiłku
-          </button>
-        </div>
-
-        <button
-          type="submit"
-          disabled={aiLoading || tableRows.every((r) => !r.productName.trim())}
-          className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 font-semibold text-sm py-2.5 rounded-xl transition"
-        >
-          {aiLoading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Szukam etykiet i liczę makro...
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              Oblicz i zapisz do: {aiMealCategory}
-            </>
-          )}
-        </button>
-      </form>
-
-      {/* Podgląd wyniku AI (utrzymywany w stanie App.tsx nawet po przełączeniu zakładek) */}
+      {/* Baner ostatniego posiłku AI (z opcją zapisania w Przepisach) */}
       {lastAiResult && (
-        <div className="bg-emerald-950/30 border border-emerald-800/50 rounded-2xl p-4 space-y-3">
+        <div className="bg-emerald-950/30 border border-emerald-800/50 rounded-2xl p-3.5 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
+            <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>
-                Dodano ({lastAiResult.mealCategory}): {lastAiResult.mealName}
+                Ostatni posiłek AI ({lastAiResult.mealCategory}): {lastAiResult.mealName}
               </span>
             </div>
             <button
@@ -739,22 +611,9 @@ export function NutritionTab({
             </button>
           </div>
 
-          <div className="divide-y divide-zinc-800/80 text-xs">
-            {lastAiResult.items.map((item, idx) => (
-              <div key={idx} className="py-1.5 flex justify-between text-zinc-300">
-                <span>
-                  {item.name} ({item.amountInGrams}g)
-                </span>
-                <span className="text-zinc-400">
-                  {item.calories} kcal • B: {item.protein}g • W: {item.carbs}g • T: {item.fat}g
-                </span>
-              </div>
-            ))}
-          </div>
-
           {aiRecipeSavedMsg ? (
             <p className="text-xs text-emerald-300 font-semibold">
-              ✓ Zapisano w zakładce „Przepisy”! (Możesz tam dopisać instrukcję przygotowania)
+              ✓ Zapisano w zakładce „Przepisy”!
             </p>
           ) : !showSaveAiRecipe ? (
             <button
@@ -782,7 +641,6 @@ export function NutritionTab({
                 min={1}
                 value={aiRecipeServings}
                 onChange={(e) => setAiRecipeServings(Number(e.target.value))}
-                title="Liczba porcji"
                 className="w-16 bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-1.5 text-xs text-center"
               />
               <button
@@ -796,193 +654,339 @@ export function NutritionTab({
         </div>
       )}
 
-      {/* Podział dziennika na posiłki dnia z osobnym podsumowaniem kcal i makro */}
-      <div className="space-y-3">
-        {MEAL_CATEGORIES.map((category) => {
-          const group = groupedMeals.find((g) => g.category === category);
-          const items = group?.items ?? [];
+      {/* Kafelki posiłków dnia w stylu Fitatu: Śniadanie, Obiad, Kolacja, Przekąska */}
+      {loading ? (
+        <div className="text-center py-8 text-zinc-500 text-sm">Ładowanie jadłospisu...</div>
+      ) : (
+        <div className="space-y-3">
+          {MEAL_CATEGORIES.map((category) => {
+            const group = groupedMeals.find((g) => g.category === category);
+            const items = group?.items ?? [];
+            const isAiOpen =
+              activeEntryMode?.category === category && activeEntryMode?.mode === 'ai';
+            const isManualOpen =
+              activeEntryMode?.category === category && activeEntryMode?.mode === 'manual';
 
-          return (
-            <div
-              key={category}
-              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-2.5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-white">{category}</h3>
-                  <p className="text-[11px] text-zinc-400">
-                    <span className="text-amber-400 font-semibold">
-                      {group?.calories ?? 0} kcal
-                    </span>{' '}
-                    • B: {group?.protein ?? 0}g • W: {group?.carbs ?? 0}g • T: {group?.fat ?? 0}g
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setManualCategory(manualCategory === category ? null : category)
-                  }
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1.5 rounded-xl transition"
-                  title="Dopisz ręcznie produkt bez użycia tokenów AI"
-                >
-                  <PenLine className="w-3 h-3 text-amber-400" />
-                  + Dopisz ręcznie
-                </button>
-              </div>
-
-              {/* Formularz ręcznego dopisania produktu do tej pory dnia */}
-              {manualCategory === category && (
-                <form
-                  onSubmit={handleManualSubmit}
-                  className="bg-zinc-950 border border-amber-500/30 rounded-xl p-3 space-y-2"
-                >
-                  <input
-                    type="text"
-                    value={manualForm.mealName}
-                    onChange={(e) =>
-                      setManualForm({ ...manualForm, mealName: e.target.value })
-                    }
-                    placeholder="np. Skyr pitny Piątnica 330ml"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs"
-                  />
-                  <div className="grid grid-cols-4 gap-1.5 text-center">
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Kcal</span>
-                      <input
-                        type="number"
-                        step="any"
-                        value={manualForm.totalCalories || ''}
-                        onChange={(e) =>
-                          setManualForm({
-                            ...manualForm,
-                            totalCalories: Number(e.target.value),
-                          })
-                        }
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Białko</span>
-                      <input
-                        type="number"
-                        step="any"
-                        value={manualForm.totalProtein || ''}
-                        onChange={(e) =>
-                          setManualForm({
-                            ...manualForm,
-                            totalProtein: Number(e.target.value),
-                          })
-                        }
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Węgle</span>
-                      <input
-                        type="number"
-                        step="any"
-                        value={manualForm.totalCarbs || ''}
-                        onChange={(e) =>
-                          setManualForm({
-                            ...manualForm,
-                            totalCarbs: Number(e.target.value),
-                          })
-                        }
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-zinc-500">Tłuszcz</span>
-                      <input
-                        type="number"
-                        step="any"
-                        value={manualForm.totalFat || ''}
-                        onChange={(e) =>
-                          setManualForm({
-                            ...manualForm,
-                            totalFat: Number(e.target.value),
-                          })
-                        }
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-xs text-center"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setManualCategory(null)}
-                      className="text-xs text-zinc-400 hover:text-white px-2 py-1"
-                    >
-                      Anuluj
-                    </button>
-                    <button
-                      type="submit"
-                      className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3 py-1 rounded-lg"
-                    >
-                      Dodaj do {category}
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {items.length === 0 ? (
-                <p className="text-xs text-zinc-600 italic">Brak wpisów w tej sekcji</p>
-              ) : (
-                <div className="divide-y divide-zinc-800/70">
-                  {items.map((meal) => (
-                    <div
-                      key={meal.id}
-                      className="py-2 flex items-center justify-between gap-2"
-                    >
-                      <div>
-                        <p className="text-xs font-medium text-zinc-200">{meal.mealName}</p>
-                        <p className="text-[11px] text-zinc-400">
-                          {meal.totalCalories} kcal • B: {meal.totalProtein}g • W:{' '}
-                          {meal.totalCarbs}g • T: {meal.totalFat}g
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteMeal(meal.id)}
-                        className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg"
-                        title="Usuń wpis"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Ewentualne wcześniejsze wpisy bez przypisanej pory dnia */}
-        {uncategorizedMeals.length > 0 && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-xs font-semibold text-zinc-400">Pozostałe wpisy z tego dnia</h3>
-            <div className="divide-y divide-zinc-800/70">
-              {uncategorizedMeals.map((meal) => (
-                <div key={meal.id} className="py-2 flex items-center justify-between gap-2">
+            return (
+              <div
+                key={category}
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden"
+              >
+                {/* Nagłówek sekcji posiłku + przyciski AI oraz + */}
+                <div className="p-3.5 flex items-center justify-between gap-2 bg-zinc-900">
                   <div>
-                    <p className="text-xs font-medium text-zinc-200">{meal.mealName}</p>
-                    <p className="text-[11px] text-zinc-400">
-                      {meal.totalCalories} kcal • B: {meal.totalProtein}g • W: {meal.totalCarbs}g
-                      • T: {meal.totalFat}g
+                    <h3 className="text-base font-bold text-white">{category}</h3>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      <span className="text-amber-400 font-semibold">
+                        {group?.calories ?? 0} kcal
+                      </span>{' '}
+                      • B: {group?.protein ?? 0}g • W: {group?.carbs ?? 0}g • T: {group?.fat ?? 0}g
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleDeleteMeal(meal.id)}
-                    className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleEntryMode(category, 'ai')}
+                      className={`h-10 px-3 rounded-xl font-bold text-xs flex items-center gap-1.5 transition ${
+                        isAiOpen
+                          ? 'bg-amber-500 text-zinc-950'
+                          : 'bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-400'
+                      }`}
+                      title={`Dodaj do ${category} za pomocą AI`}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>AI</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleEntryMode(category, 'manual')}
+                      className={`w-10 h-10 rounded-xl font-bold flex items-center justify-center transition ${
+                        isManualOpen
+                          ? 'bg-zinc-200 text-zinc-950'
+                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-100'
+                      }`}
+                      title={`Dodaj produkt ręcznie do ${category}`}
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+                  </div>
                 </div>
-              ))}
+
+                {/* Rozwijany formularz AI dla tej konkretnej pory dnia */}
+                {isAiOpen && (
+                  <form
+                    onSubmit={(e) => handleAiTableSubmit(e, category)}
+                    className="p-3.5 bg-zinc-950/90 border-t border-zinc-800 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-400">
+                        Dodaj składniki przez AI → {category}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveEntryMode(null)}
+                        className="text-zinc-500 hover:text-white"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {tableRows.map((row, idx) => (
+                      <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
+                        <div className="col-span-4 flex">
+                          <input
+                            type="number"
+                            min={0}
+                            step="any"
+                            value={row.amount}
+                            onChange={(e) => {
+                              const copy = [...tableRows];
+                              copy[idx].amount = e.target.value;
+                              setTableRows(copy);
+                            }}
+                            placeholder="200"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-l-xl px-2 py-2 text-xs text-center text-white"
+                          />
+                          <select
+                            value={row.unit}
+                            onChange={(e) => {
+                              const copy = [...tableRows];
+                              copy[idx].unit = e.target.value as 'g' | 'ml';
+                              setTableRows(copy);
+                            }}
+                            className="bg-zinc-900 border-y border-r border-zinc-800 rounded-r-xl px-1.5 py-2 text-xs text-zinc-400"
+                          >
+                            <option value="g">g</option>
+                            <option value="ml">ml</option>
+                          </select>
+                        </div>
+
+                        <div className={tableRows.length > 1 ? 'col-span-7' : 'col-span-8'}>
+                          <input
+                            type="text"
+                            value={row.productName}
+                            onChange={(e) => {
+                              const copy = [...tableRows];
+                              copy[idx].productName = e.target.value;
+                              setTableRows(copy);
+                            }}
+                            placeholder="Nazwa produktu i firma..."
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100"
+                          />
+                        </div>
+
+                        {tableRows.length > 1 && (
+                          <div className="col-span-1 flex justify-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTableRows(tableRows.filter((_, i) => i !== idx))
+                              }
+                              className="p-1 text-zinc-500 hover:text-red-400"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTableRows([
+                            ...tableRows,
+                            { amount: '', unit: 'g', productName: '' },
+                          ])
+                        }
+                        className="text-xs font-semibold text-amber-400 hover:underline"
+                      >
+                        + Kolejny składnik
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={aiLoading || tableRows.every((r) => !r.productName.trim())}
+                        className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 font-bold text-xs px-4 py-2 rounded-xl"
+                      >
+                        {aiLoading ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Liczę...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            Oblicz i zapisz
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Rozwijany formularz ręczny (+) dla tej pory dnia */}
+                {isManualOpen && (
+                  <form
+                    onSubmit={(e) => handleManualSubmit(e, category)}
+                    className="p-3.5 bg-zinc-950/90 border-t border-zinc-800 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-zinc-300">
+                        Dodaj ręcznie → {category}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveEntryMode(null)}
+                        className="text-zinc-500 hover:text-white"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={manualForm.mealName}
+                      onChange={(e) =>
+                        setManualForm({ ...manualForm, mealName: e.target.value })
+                      }
+                      placeholder="np. Skyr pitny Piątnica 330ml"
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs"
+                    />
+
+                    <div className="grid grid-cols-4 gap-2 text-center">
+                      <div>
+                        <span className="block text-[10px] text-zinc-500">Kcal</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={manualForm.totalCalories || ''}
+                          onChange={(e) =>
+                            setManualForm({
+                              ...manualForm,
+                              totalCalories: Number(e.target.value),
+                            })
+                          }
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1.5 text-xs text-center"
+                        />
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-zinc-500">Białko (g)</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={manualForm.totalProtein || ''}
+                          onChange={(e) =>
+                            setManualForm({
+                              ...manualForm,
+                              totalProtein: Number(e.target.value),
+                            })
+                          }
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1.5 text-xs text-center"
+                        />
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-zinc-500">Węgle (g)</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={manualForm.totalCarbs || ''}
+                          onChange={(e) =>
+                            setManualForm({
+                              ...manualForm,
+                              totalCarbs: Number(e.target.value),
+                            })
+                          }
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1.5 text-xs text-center"
+                        />
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-zinc-500">Tłuszcz (g)</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={manualForm.totalFat || ''}
+                          onChange={(e) =>
+                            setManualForm({
+                              ...manualForm,
+                              totalFat: Number(e.target.value),
+                            })
+                          }
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1.5 text-xs text-center"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs px-4 py-2 rounded-xl"
+                      >
+                        Zapisz w {category}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Lista produktów zapisanych w tej porze dnia */}
+                {items.length > 0 && (
+                  <div className="px-3.5 pb-2.5 pt-1 border-t border-zinc-800/70 divide-y divide-zinc-800/60">
+                    {items.map((meal) => (
+                      <div
+                        key={meal.id}
+                        className="py-2 flex items-center justify-between gap-2"
+                      >
+                        <div>
+                          <p className="text-xs font-medium text-zinc-200">{meal.mealName}</p>
+                          <p className="text-[11px] text-zinc-400">
+                            {meal.totalCalories} kcal • B: {meal.totalProtein}g • W:{' '}
+                            {meal.totalCarbs}g • T: {meal.totalFat}g
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteMeal(meal.id)}
+                          className="p-2 text-zinc-500 hover:text-red-400 rounded-lg"
+                          title="Usuń pozycję"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {uncategorizedMeals.length > 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5 space-y-2">
+              <h3 className="text-xs font-semibold text-zinc-400">Inne wpisy</h3>
+              <div className="divide-y divide-zinc-800/60">
+                {uncategorizedMeals.map((meal) => (
+                  <div key={meal.id} className="py-2 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-zinc-200">{meal.mealName}</p>
+                      <p className="text-[11px] text-zinc-400">
+                        {meal.totalCalories} kcal • B: {meal.totalProtein}g • W:{' '}
+                        {meal.totalCarbs}g • T: {meal.totalFat}g
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteMeal(meal.id)}
+                      className="p-2 text-zinc-500 hover:text-red-400 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1001,12 +1005,12 @@ function MacroBox({
   color: string;
 }) {
   return (
-    <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-xl p-3 space-y-1.5">
-      <p className="text-xs text-zinc-400">{label}</p>
-      <p className="text-sm font-bold text-zinc-100">
+    <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-xl p-2.5 space-y-1">
+      <p className="text-[11px] text-zinc-400">{label}</p>
+      <p className="text-xs sm:text-sm font-bold text-zinc-100">
         {current}g
         {target !== undefined && (
-          <span className="text-xs font-normal text-zinc-500"> / {target}g</span>
+          <span className="text-[11px] font-normal text-zinc-500"> / {target}g</span>
         )}
       </p>
       {percentage !== undefined && (

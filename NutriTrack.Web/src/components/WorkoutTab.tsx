@@ -13,7 +13,9 @@ import {
   ChevronUp,
   Pencil,
   AlertTriangle,
-  Calendar as CalendarIcon,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { playRestFinishedSound } from '../utils/sound';
@@ -39,33 +41,46 @@ export function WorkoutTab() {
   const today = useMemo(() => new Date(), []);
   const todayIso = today.toISOString().split('T')[0];
 
+  const [subView, setSubView] = useState<'plans' | 'history'>('plans');
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
-  const [history, setHistory] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
+  const [editingHistorySession, setEditingHistorySession] = useState<WorkoutSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Kalendarz odbytych treningów
-  const [calYear, setCalYear] = useState(today.getFullYear());
-  const [calMonth, setCalMonth] = useState(today.getMonth());
+  // Zarządzanie listą planów (kolejność góra/dół + usuwanie z potwierdzeniem)
+  const [managePlansMode, setManagePlansMode] = useState(false);
+  const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<WorkoutTemplate | null>(null);
+
+  // Widok Historia (elastyczne lata + miesiące + kalendarz + klikalny dzień)
+  const [histYear, setHistYear] = useState(today.getFullYear());
+  const [histMonth, setHistMonth] = useState(today.getMonth());
+  const [historySessions, setHistorySessions] = useState<WorkoutSession[]>([]);
   const [workoutDates, setWorkoutDates] = useState<Set<string>>(new Set());
-  const [showWorkoutCalendar, setShowWorkoutCalendar] = useState(false);
-
-  // Rozwijane podglądy planów oraz szczegółów historycznych treningów
-  const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(null);
   const [expandedHistoryId, setExpandedHistoryId] = useState<number | null>(null);
+  const [confirmDeleteSession, setConfirmDeleteSession] = useState<WorkoutSession | null>(null);
 
-  // Tryb edycji serii (chroni przed przypadkowym usunięciem serii palcem)
+  const availableYears = useMemo(() => {
+    const maxYear = Math.max(today.getFullYear() + 1, 2027);
+    const years: number[] = [];
+    for (let y = 2026; y <= maxYear; y++) years.push(y);
+    return years;
+  }, [today]);
+
+  // Rozwijane podglądy planów
+  const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
+
+  // Tryb edycji serii w aktywnej lub edytowanej sesji
   const [editingSetsExercises, setEditingSetsExercises] = useState<Record<string, boolean>>({});
 
-  // Dopisywanie zapomnianego ćwiczenia do ukończonego treningu w historii
-  const [addingToHistorySessionId, setAddingToHistorySessionId] = useState<number | null>(null);
-  const [historyNewSetForm, setHistoryNewSetForm] = useState({
+  // Dopisywanie nowego ćwiczenia do aktywnej lub edytowanej sesji
+  const [showAddExerciseForm, setShowAddExerciseForm] = useState(false);
+  const [newExerciseForm, setNewExerciseForm] = useState({
     exerciseName: '',
     muscleGroup: 'Plecy',
     exerciseType: 'Strength' as 'Strength' | 'Cardio',
-    reps: 10,
-    weightKg: 40,
+    restSeconds: 120,
   });
 
   // Potwierdzenie zakończenia przy nieodhaczonych seriach
@@ -81,6 +96,7 @@ export function WorkoutTab() {
   // Kreator i edytor planu treningowego
   const [showPlanForm, setShowPlanForm] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<number | null>(null);
+  const [planFormError, setPlanFormError] = useState<string | null>(null);
   const [planName, setPlanName] = useState('');
   const [planExercises, setPlanExercises] = useState([
     {
@@ -93,18 +109,12 @@ export function WorkoutTab() {
     },
   ]);
 
-  const loadInitialData = async () => {
+  const loadPlansAndActive = async () => {
     try {
       setLoading(true);
       setError(null);
-      const [tpls, hist, dates] = await Promise.all([
-        api.getWorkoutTemplates(),
-        api.getWorkoutHistory(15),
-        api.getMonthlyWorkoutDates(calYear, calMonth + 1).catch(() => [] as string[]),
-      ]);
+      const tpls = await api.getWorkoutTemplates();
       setTemplates(tpls);
-      setHistory(hist);
-      setWorkoutDates(new Set(dates));
 
       try {
         const active = await api.getActiveSession();
@@ -113,15 +123,38 @@ export function WorkoutTab() {
         setActiveSession(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Błąd ładowania treningów.');
+      setError(err instanceof Error ? err.message : 'Błąd ładowania planów treningowych.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadHistoryData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const [hist, dates] = await Promise.all([
+        api.getWorkoutHistory(histYear, histMonth + 1, 50),
+        api.getMonthlyWorkoutDates(histYear, histMonth + 1).catch(() => [] as string[]),
+      ]);
+      setHistorySessions(hist);
+      setWorkoutDates(new Set(dates));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Błąd ładowania historii treningów.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadInitialData();
-  }, [calYear, calMonth]);
+    loadPlansAndActive();
+  }, []);
+
+  useEffect(() => {
+    if (subView === 'history') {
+      loadHistoryData();
+    }
+  }, [subView, histYear, histMonth]);
 
   useEffect(() => {
     if (!activeSession) {
@@ -167,8 +200,25 @@ export function WorkoutTab() {
     setRestExerciseName(exerciseName);
   };
 
+  const moveTemplate = async (index: number, direction: -1 | 1) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= templates.length) return;
+
+    const copy = [...templates];
+    const [moved] = copy.splice(index, 1);
+    copy.splice(targetIndex, 0, moved);
+    setTemplates(copy);
+
+    try {
+      await api.reorderWorkoutTemplates(copy.map((t) => t.id));
+    } catch {
+      await loadPlansAndActive();
+    }
+  };
+
   const openNewPlanForm = () => {
     setEditingTemplateId(null);
+    setPlanFormError(null);
     setPlanName('');
     setPlanExercises([
       {
@@ -185,6 +235,7 @@ export function WorkoutTab() {
 
   const openEditPlanForm = (tpl: WorkoutTemplate) => {
     setEditingTemplateId(tpl.id);
+    setPlanFormError(null);
     setPlanName(tpl.name);
     setPlanExercises(
       tpl.exercises.map((ex) => ({
@@ -201,8 +252,20 @@ export function WorkoutTab() {
 
   const handleSavePlan = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPlanFormError(null);
+
+    if (!planName.trim()) {
+      setPlanFormError('Podaj nazwę planu treningowego.');
+      return;
+    }
+
     const validExercises = planExercises.filter((ex) => ex.exerciseName.trim() !== '');
-    if (!planName.trim() || validExercises.length === 0) return;
+    if (validExercises.length === 0) {
+      setPlanFormError(
+        'Nie można utworzyć planu treningowego bez żadnego ćwiczenia — wpisz nazwę przynajmniej jednego ćwiczenia.'
+      );
+      return;
+    }
 
     const payload = {
       name: planName.trim(),
@@ -225,9 +288,9 @@ export function WorkoutTab() {
       }
       setShowPlanForm(false);
       setEditingTemplateId(null);
-      await loadInitialData();
+      await loadPlansAndActive();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się zapisać planu.');
+      setPlanFormError(err instanceof Error ? err.message : 'Nie udało się zapisać planu.');
     }
   };
 
@@ -235,6 +298,7 @@ export function WorkoutTab() {
     try {
       setError(null);
       setUnfinishedWarningCount(null);
+      setEditingSetsExercises({});
       const session = await api.startWorkoutFromTemplate(templateId);
       setActiveSession(session);
     } catch (err) {
@@ -242,15 +306,27 @@ export function WorkoutTab() {
     }
   };
 
-  const handleToggleSet = async (
+  // Wspólna obsługa sesji zarówno dla aktywnego treningu, jak i edycji treningu z historii
+  const currentSession = editingHistorySession ?? activeSession;
+  const isHistoryEditMode = editingHistorySession !== null;
+
+  const updateCurrentSessionState = (updated: WorkoutSession) => {
+    if (isHistoryEditMode) {
+      setEditingHistorySession(updated);
+    } else {
+      setActiveSession(updated);
+    }
+  };
+
+  const handleToggleOrSaveSet = async (
     set: SetLog,
     weightKg: number,
     reps: number,
     restSeconds: number,
     exerciseName: string
   ) => {
-    if (!activeSession) return;
-    const nextCompleted = !set.isCompleted;
+    if (!currentSession) return;
+    const nextCompleted = isHistoryEditMode ? true : !set.isCompleted;
 
     try {
       const updated = await api.updateSet(set.id, {
@@ -259,7 +335,7 @@ export function WorkoutTab() {
         isCompleted: nextCompleted,
       });
 
-      const updatedExercises = activeSession.exercises.map((ex) => ({
+      const updatedExercises = currentSession.exercises.map((ex) => ({
         ...ex,
         sets: ex.sets.map((s) => (s.id === updated.id ? updated : s)),
       }));
@@ -270,13 +346,13 @@ export function WorkoutTab() {
         .filter((s) => s.isCompleted)
         .reduce((acc, s) => acc + s.weightKg * s.reps, 0);
 
-      setActiveSession({
-        ...activeSession,
+      updateCurrentSessionState({
+        ...currentSession,
         totalVolumeKg: Math.round(newVolume * 10) / 10,
         exercises: updatedExercises,
       });
 
-      if (nextCompleted) {
+      if (!isHistoryEditMode && nextCompleted) {
         startRestTimer(restSeconds, exerciseName);
       }
     } catch (err) {
@@ -285,10 +361,10 @@ export function WorkoutTab() {
   };
 
   const handleDeleteSet = async (setId: number, exerciseName: string) => {
-    if (!activeSession) return;
+    if (!currentSession) return;
     try {
       await api.deleteSet(setId);
-      const updatedExercises = activeSession.exercises
+      const updatedExercises = currentSession.exercises
         .map((ex) => {
           if (ex.exerciseName !== exerciseName) return ex;
           const filtered = ex.sets
@@ -304,8 +380,8 @@ export function WorkoutTab() {
         .filter((s) => s.isCompleted)
         .reduce((acc, s) => acc + s.weightKg * s.reps, 0);
 
-      setActiveSession({
-        ...activeSession,
+      updateCurrentSessionState({
+        ...currentSession,
         totalVolumeKg: Math.round(newVolume * 10) / 10,
         exercises: updatedExercises,
       });
@@ -320,34 +396,63 @@ export function WorkoutTab() {
     muscleGroup: string,
     exerciseType: 'Strength' | 'Cardio'
   ) => {
-    if (!activeSession) return;
+    if (!currentSession) return;
     try {
       const newSet = await api.addSetToSession(
-        activeSession.id,
+        currentSession.id,
         exerciseName,
         restSeconds,
         muscleGroup,
         exerciseType
       );
-      const updatedExercises = activeSession.exercises.map((ex) =>
-        ex.exerciseName === exerciseName ? { ...ex, sets: [...ex.sets, newSet] } : ex
-      );
-      setActiveSession({ ...activeSession, exercises: updatedExercises });
+      const existing = currentSession.exercises.find((e) => e.exerciseName === exerciseName);
+      const updatedExercises = existing
+        ? currentSession.exercises.map((ex) =>
+            ex.exerciseName === exerciseName ? { ...ex, sets: [...ex.sets, newSet] } : ex
+          )
+        : [
+            ...currentSession.exercises,
+            {
+              exerciseName,
+              exerciseOrder: currentSession.exercises.length + 1,
+              restSeconds,
+              muscleGroup,
+              exerciseType,
+              sets: [newSet],
+            },
+          ];
+
+      updateCurrentSessionState({ ...currentSession, exercises: updatedExercises });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się dodać serii.');
     }
   };
 
+  const handleAddNewExerciseToSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newExerciseForm.exerciseName.trim()) return;
+
+    await handleAddSet(
+      newExerciseForm.exerciseName.trim(),
+      newExerciseForm.restSeconds,
+      newExerciseForm.muscleGroup,
+      newExerciseForm.exerciseType
+    );
+
+    setNewExerciseForm((prev) => ({ ...prev, exerciseName: '' }));
+    setShowAddExerciseForm(false);
+  };
+
   const handleRemoveExerciseFromSession = async (exerciseName: string) => {
-    if (!activeSession) return;
+    if (!currentSession) return;
     try {
-      await api.removeExerciseFromSession(activeSession.id, exerciseName);
-      const updatedExercises = activeSession.exercises.filter(
+      await api.removeExerciseFromSession(currentSession.id, exerciseName);
+      const updatedExercises = currentSession.exercises.filter(
         (ex) => ex.exerciseName !== exerciseName
       );
-      setActiveSession({ ...activeSession, exercises: updatedExercises });
+      updateCurrentSessionState({ ...currentSession, exercises: updatedExercises });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się usunąć ćwiczenia z sesji.');
+      setError(err instanceof Error ? err.message : 'Nie udało się usunąć ćwiczenia.');
     }
   };
 
@@ -372,38 +477,9 @@ export function WorkoutTab() {
       setActiveSession(null);
       setUnfinishedWarningCount(null);
       setRestRemaining(0);
-      await loadInitialData();
+      await loadPlansAndActive();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Błąd kończenia treningu.');
-    }
-  };
-
-  const handleAddSetToCompletedHistory = async (e: React.FormEvent, sessionId: number) => {
-    e.preventDefault();
-    if (!historyNewSetForm.exerciseName.trim()) return;
-
-    try {
-      await api.addCompletedSetToHistory(sessionId, {
-        exerciseName: historyNewSetForm.exerciseName.trim(),
-        muscleGroup: historyNewSetForm.muscleGroup,
-        exerciseType: historyNewSetForm.exerciseType,
-        reps: Number(historyNewSetForm.reps) || 0,
-        weightKg: Number(historyNewSetForm.weightKg) || 0,
-      });
-      setHistoryNewSetForm((prev) => ({ ...prev, exerciseName: '' }));
-      setAddingToHistorySessionId(null);
-      await loadInitialData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się dopisać ćwiczenia.');
-    }
-  };
-
-  const handleDeleteHistorySession = async (sessionId: number) => {
-    try {
-      await api.deleteWorkoutSession(sessionId);
-      await loadInitialData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się usunąć treningu z historii.');
     }
   };
 
@@ -413,50 +489,84 @@ export function WorkoutTab() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const daysInCalMonth = useMemo(() => {
-    const count = new Date(calYear, calMonth + 1, 0).getDate();
+  const daysInHistMonth = useMemo(() => {
+    const count = new Date(histYear, histMonth + 1, 0).getDate();
     return Array.from({ length: count }, (_, i) => {
       const dayNum = i + 1;
-      const iso = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(dayNum).padStart(
+      const iso = `${histYear}-${String(histMonth + 1).padStart(2, '0')}-${String(dayNum).padStart(
         2,
         '0'
       )}`;
       return { dayNum, iso };
     });
-  }, [calYear, calMonth]);
+  }, [histYear, histMonth]);
 
-  // --- WIDOK AKTYWNEGO TRENINGU ---
-  if (activeSession) {
+  const filteredHistorySessions = useMemo(() => {
+    if (!selectedHistoryDate) return historySessions;
+    return historySessions.filter((s) => s.startedAt.startsWith(selectedHistoryDate));
+  }, [historySessions, selectedHistoryDate]);
+
+  // --- WIDOK AKTYWNEGO TRENINGU LUB EDYCJI UKOŃCZONEGO TRENINGU ---
+  if (currentSession) {
     return (
       <div className="space-y-4 pb-28">
         <div className="sticky top-0 z-20 bg-zinc-950/95 backdrop-blur border-b border-zinc-800 -mx-4 px-4 py-3 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-white">{activeSession.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-white">{currentSession.name}</h2>
+              {isHistoryEditMode && (
+                <span className="text-[10px] font-bold uppercase bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-md">
+                  Edycja historii
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
-              <span>Czas: {formatTime(elapsedWorkoutSeconds)}</span>
+              {isHistoryEditMode ? (
+                <span>
+                  Data: {new Date(currentSession.startedAt).toLocaleDateString('pl-PL')}
+                </span>
+              ) : (
+                <span>Czas: {formatTime(elapsedWorkoutSeconds)}</span>
+              )}
               <span>•</span>
-              <span>Tonaż: {activeSession.totalVolumeKg} kg</span>
+              <span>Tonaż: {currentSession.totalVolumeKg} kg</span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={playRestFinishedSound}
-              className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-400 hover:text-amber-400"
-              title="Testuj gong przerwy"
-            >
-              <Volume2 className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleFinishClick}
-              className="bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-sm px-4 py-2 rounded-xl shadow-lg shadow-amber-500/10 transition"
-            >
-              Zakończ trening
-            </button>
+            {!isHistoryEditMode && (
+              <button
+                onClick={playRestFinishedSound}
+                className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-400 hover:text-amber-400"
+                title="Testuj gong przerwy"
+              >
+                <Volume2 className="w-4 h-4" />
+              </button>
+            )}
+
+            {isHistoryEditMode ? (
+              <button
+                onClick={async () => {
+                  setEditingHistorySession(null);
+                  setEditingSetsExercises({});
+                  await loadHistoryData();
+                }}
+                className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs px-4 py-2 rounded-xl transition"
+              >
+                Zakończ edycję
+              </button>
+            ) : (
+              <button
+                onClick={handleFinishClick}
+                className="bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-sm px-4 py-2 rounded-xl shadow-lg shadow-amber-500/10 transition"
+              >
+                Zakończ trening
+              </button>
+            )}
           </div>
         </div>
 
-        {unfinishedWarningCount !== null && (
+        {!isHistoryEditMode && unfinishedWarningCount !== null && (
           <div className="bg-amber-950/60 border border-amber-500/60 rounded-2xl p-4 space-y-3">
             <div className="flex items-start gap-2.5">
               <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -493,7 +603,7 @@ export function WorkoutTab() {
           </div>
         )}
 
-        {activeSession.exercises.map((exercise) => {
+        {currentSession.exercises.map((exercise) => {
           const isCardio =
             exercise.exerciseType === 'Cardio' || exercise.muscleGroup === 'Cardio';
           const isEditingSets = !!editingSetsExercises[exercise.exerciseName];
@@ -513,20 +623,19 @@ export function WorkoutTab() {
                       {exercise.muscleGroup}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    {exercise.restSeconds > 0 && (
+                  {!isHistoryEditMode && exercise.restSeconds > 0 && (
+                    <div className="flex items-center gap-2 mt-1">
                       <span className="inline-flex items-center gap-1 text-xs bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-md font-medium">
                         <Timer className="w-3 h-3" />
                         {Math.round(exercise.restSeconds / 60)} min ({exercise.restSeconds}s)
                       </span>
-                    )}
-                    {exercise.notes && (
-                      <span className="text-xs text-zinc-400">{exercise.notes}</span>
-                    )}
-                  </div>
+                      {exercise.notes && (
+                        <span className="text-xs text-zinc-400">{exercise.notes}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Przycisk trybu edycji serii (chroni przed przypadkowym usunięciem) */}
                 <button
                   type="button"
                   onClick={() =>
@@ -553,7 +662,7 @@ export function WorkoutTab() {
                     className="inline-flex items-center gap-1 text-[11px] text-red-400 hover:underline"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    Usuń całe ćwiczenie z dzisiejszego treningu
+                    Usuń całe ćwiczenie z treningu
                   </button>
                 </div>
               )}
@@ -568,7 +677,7 @@ export function WorkoutTab() {
                   {isCardio ? 'Nachyl. %' : 'Ciężar (kg)'}
                 </div>
                 <div className="col-span-2 text-center">
-                  {isEditingSets ? 'Usuń' : 'Zalicz'}
+                  {isEditingSets ? 'Usuń' : isHistoryEditMode ? 'Zapisz' : 'Zalicz'}
                 </div>
               </div>
 
@@ -578,8 +687,9 @@ export function WorkoutTab() {
                     key={set.id}
                     set={set}
                     isEditing={isEditingSets}
+                    isHistoryEdit={isHistoryEditMode}
                     onToggle={(w, r) =>
-                      handleToggleSet(
+                      handleToggleOrSaveSet(
                         set,
                         w,
                         r,
@@ -610,7 +720,71 @@ export function WorkoutTab() {
           );
         })}
 
-        {restRemaining > 0 && (
+        {/* Przycisk i formularz dodania nowego ćwiczenia do aktywnej lub edytowanej sesji */}
+        {showAddExerciseForm ? (
+          <form
+            onSubmit={handleAddNewExerciseToSession}
+            className="bg-zinc-900 border border-amber-500/40 rounded-2xl p-4 space-y-3"
+          >
+            <h3 className="text-xs font-bold text-amber-400">Dodaj ćwiczenie do treningu</h3>
+            <div className="grid grid-cols-12 gap-2">
+              <input
+                type="text"
+                value={newExerciseForm.exerciseName}
+                onChange={(e) =>
+                  setNewExerciseForm({ ...newExerciseForm, exerciseName: e.target.value })
+                }
+                placeholder="Nazwa ćwiczenia (np. Face Pull)"
+                className="col-span-7 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs"
+              />
+              <select
+                value={newExerciseForm.muscleGroup}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setNewExerciseForm({
+                    ...newExerciseForm,
+                    muscleGroup: val,
+                    exerciseType: val === 'Cardio' ? 'Cardio' : 'Strength',
+                  });
+                }}
+                className="col-span-5 bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-2 text-xs"
+              >
+                {MUSCLE_GROUPS.map((mg) => (
+                  <option key={mg} value={mg}>
+                    {mg}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddExerciseForm(false)}
+                className="text-xs text-zinc-400 hover:text-white px-3 py-1.5"
+              >
+                Anuluj
+              </button>
+              <button
+                type="submit"
+                className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs px-4 py-1.5 rounded-xl"
+              >
+                Dodaj ćwiczenie
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowAddExerciseForm(true)}
+            className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 border border-dashed border-zinc-700 rounded-2xl text-xs font-bold text-amber-400 flex items-center justify-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            Dodaj ćwiczenie
+          </button>
+        )}
+
+        {/* Timer przerwy tylko w aktywnym treningu */}
+        {!isHistoryEditMode && restRemaining > 0 && (
           <div className="fixed bottom-20 left-4 right-4 max-w-xl mx-auto z-30 bg-zinc-900 border border-amber-500/50 shadow-2xl rounded-2xl p-3.5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-mono font-bold text-sm">
@@ -648,7 +822,6 @@ export function WorkoutTab() {
               <button
                 onClick={() => setRestRemaining(0)}
                 className="p-1.5 text-zinc-400 hover:text-white"
-                title="Pomiń przerwę"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -659,43 +832,91 @@ export function WorkoutTab() {
     );
   }
 
-  // --- WIDOK PLANÓW TRENINGOWYCH, KALENDARZA TRENINGÓW I HISTORII ---
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <Dumbbell className="w-5 h-5 text-amber-400" />
-          Plany treningowe
-        </h2>
-        <div className="flex items-center gap-2">
+  // --- PODWIDOK: HISTORIA TRENINGÓW (z kalendarzem i podziałem na miesiące) ---
+  if (subView === 'history') {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-2">
           <button
-            onClick={() => setShowWorkoutCalendar(!showWorkoutCalendar)}
-            className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs px-3 py-2 rounded-xl transition"
+            onClick={() => {
+              setSubView('plans');
+              setSelectedHistoryDate(null);
+            }}
+            className="inline-flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs px-3 py-2 rounded-xl"
           >
-            <CalendarIcon className="w-4 h-4 text-amber-400" />
-            Kalendarz
+            <ArrowLeft className="w-4 h-4 text-amber-400" />
+            Plany treningowe
           </button>
-          <button
-            onClick={openNewPlanForm}
-            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition"
-          >
-            <Plus className="w-4 h-4" />
-            Nowy plan
-          </button>
-        </div>
-      </div>
 
-      {/* Kalendarz odbytych treningów */}
-      {showWorkoutCalendar && (
+          <h2 className="text-base font-bold text-white flex items-center gap-1.5">
+            <History className="w-4 h-4 text-amber-400" />
+            Historia treningów
+          </h2>
+        </div>
+
+        {/* Okno potwierdzenia usunięcia treningu z historii */}
+        {confirmDeleteSession && (
+          <div className="bg-red-950/60 border border-red-700 rounded-2xl p-4 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-red-100 space-y-1">
+                <p className="font-bold text-sm text-red-300">
+                  Usunąć trening „{confirmDeleteSession.name}” z dnia{' '}
+                  {new Date(confirmDeleteSession.startedAt).toLocaleDateString('pl-PL')}?
+                </p>
+                <p>Wszystkie zapisane w nim serie i tonaż zostaną trwale usunięte.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteSession(null)}
+                className="px-3.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs font-semibold rounded-xl"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={async () => {
+                  await api.deleteWorkoutSession(confirmDeleteSession.id);
+                  setConfirmDeleteSession(null);
+                  await loadHistoryData();
+                }}
+                className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl"
+              >
+                Tak, usuń trening
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Kalendarz z elastycznym wyborem roku i miesiąca */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-400">
-              Dni z wykonanym treningiem ({MONTHS_PL[calMonth]} {calYear})
-            </span>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
+              {availableYears.map((yr) => (
+                <button
+                  key={yr}
+                  onClick={() => {
+                    setHistYear(yr);
+                    setSelectedHistoryDate(null);
+                  }}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    histYear === yr
+                      ? 'bg-amber-500 text-zinc-950'
+                      : 'bg-zinc-950 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {yr}
+                </button>
+              ))}
+            </div>
+
             <select
-              value={calMonth}
-              onChange={(e) => setCalMonth(Number(e.target.value))}
-              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-xs"
+              value={histMonth}
+              onChange={(e) => {
+                setHistMonth(Number(e.target.value));
+                setSelectedHistoryDate(null);
+              }}
+              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200"
             >
               {MONTHS_PL.map((m, i) => (
                 <option key={m} value={i}>
@@ -706,22 +927,247 @@ export function WorkoutTab() {
           </div>
 
           <div className="grid grid-cols-7 gap-1.5">
-            {daysInCalMonth.map(({ dayNum, iso }) => {
+            {daysInHistMonth.map(({ dayNum, iso }) => {
               const trained = workoutDates.has(iso);
               const isToday = iso === todayIso;
+              const isSelected = iso === selectedHistoryDate;
+
               return (
-                <div
+                <button
                   key={iso}
-                  className={`py-1.5 rounded-lg text-center text-xs font-semibold ${
+                  type="button"
+                  onClick={() => setSelectedHistoryDate(isSelected ? null : iso)}
+                  className={`py-2 rounded-lg text-center text-xs font-semibold transition ${
                     trained
                       ? 'bg-emerald-500/25 border border-emerald-500/60 text-emerald-300'
-                      : 'bg-zinc-950/70 text-zinc-500'
-                  } ${isToday ? 'ring-1 ring-amber-400' : ''}`}
+                      : 'bg-zinc-950/70 text-zinc-500 hover:bg-zinc-800'
+                  } ${isSelected ? 'ring-2 ring-amber-400' : isToday ? 'ring-1 ring-amber-400/70' : ''}`}
                 >
                   {dayNum}
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedHistoryDate && (
+            <div className="flex items-center justify-between text-xs text-amber-400 pt-1">
+              <span>Wybrany dzień: {selectedHistoryDate}</span>
+              <button
+                onClick={() => setSelectedHistoryDate(null)}
+                className="underline text-zinc-400 hover:text-white"
+              >
+                Pokaż cały miesiąc
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Lista wykonanych treningów w wybranym miesiącu lub dniu */}
+        {loading ? (
+          <div className="text-center py-8 text-zinc-500 text-sm">Ładowanie historii...</div>
+        ) : filteredHistorySessions.length === 0 ? (
+          <div className="bg-zinc-900/50 border border-dashed border-zinc-800 rounded-2xl p-6 text-center text-sm text-zinc-500">
+            {selectedHistoryDate
+              ? 'Brak wykonanego treningu w tym dniu.'
+              : `Brak zapisanych treningów w miesiącu ${MONTHS_PL[histMonth]} ${histYear}.`}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredHistorySessions.map((session) => {
+              const isExpanded =
+                expandedHistoryId === session.id || selectedHistoryDate !== null;
+              const durationMins =
+                session.finishedAt && session.startedAt
+                  ? Math.max(
+                      1,
+                      Math.round(
+                        (new Date(session.finishedAt).getTime() -
+                          new Date(session.startedAt).getTime()) /
+                          60000
+                      )
+                    )
+                  : null;
+
+              return (
+                <div
+                  key={session.id}
+                  className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div
+                      onClick={() => setExpandedHistoryId(isExpanded ? null : session.id)}
+                      className="cursor-pointer flex-1"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-base font-bold text-white">{session.name}</p>
+                        {isExpanded ? (
+                          <ChevronUp className="w-4 h-4 text-zinc-400" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-zinc-400" />
+                        )}
+                      </div>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        {new Date(session.startedAt).toLocaleDateString('pl-PL')}
+                        {durationMins !== null ? ` • Czas: ${durationMins} min` : ''}
+                      </p>
+                    </div>
+
+                    <span className="text-xs font-bold text-amber-400 bg-amber-500/15 px-2.5 py-1 rounded-lg">
+                      {session.totalVolumeKg} kg tonażu
+                    </span>
+                  </div>
+
+                  {/* Przyciski Edytuj trening oraz Usuń */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingSetsExercises({});
+                        setEditingHistorySession(session);
+                      }}
+                      className="flex items-center justify-center gap-1.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs py-2 rounded-xl"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                      Edytuj trening
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteSession(session)}
+                      className="flex items-center justify-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-semibold text-xs py-2 rounded-xl"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Usuń trening
+                    </button>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="bg-zinc-950/80 border border-zinc-800/70 rounded-xl p-3 space-y-3 text-xs">
+                      {session.exercises.map((ex) => {
+                        const completedSets = ex.sets.filter((s) => s.isCompleted);
+                        const isCardio =
+                          ex.exerciseType === 'Cardio' || ex.muscleGroup === 'Cardio';
+                        const exVolume = !isCardio
+                          ? completedSets.reduce((acc, s) => acc + s.weightKg * s.reps, 0)
+                          : 0;
+
+                        return (
+                          <div key={ex.exerciseName} className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <p className="font-semibold text-amber-400">
+                                {ex.exerciseName}{' '}
+                                <span className="text-[10px] text-zinc-500 font-normal">
+                                  ({ex.muscleGroup})
+                                </span>
+                              </p>
+                              {!isCardio && exVolume > 0 && (
+                                <span className="text-[11px] text-zinc-400">
+                                  Suma: {Math.round(exVolume)} kg
+                                </span>
+                              )}
+                            </div>
+                            {completedSets.length === 0 ? (
+                              <p className="text-zinc-500">Brak zaliczonych serii</p>
+                            ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {completedSets.map((s) => (
+                                  <div
+                                    key={s.id}
+                                    className="bg-zinc-900 border border-zinc-800 px-2.5 py-1.5 rounded-lg flex justify-between text-zinc-300"
+                                  >
+                                    <span className="text-zinc-500">Seria {s.setNumber}</span>
+                                    <span className="font-semibold">
+                                      {isCardio
+                                        ? `${s.reps} min @ ${s.weightKg}%`
+                                        : `${s.reps} powt. × ${s.weightKg} kg`}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- WIDOK GŁÓWNY ZAKŁADKI TRENING: PLANY TRENINGOWE + PRZYCISK HISTORIA ---
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <Dumbbell className="w-5 h-5 text-amber-400" />
+          Plany treningowe
+        </h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSubView('history')}
+            className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs px-3 py-2 rounded-xl transition"
+          >
+            <History className="w-4 h-4 text-amber-400" />
+            Historia
+          </button>
+
+          {templates.length > 0 && (
+            <button
+              onClick={() => setManagePlansMode(!managePlansMode)}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                managePlansMode
+                  ? 'bg-zinc-200 text-zinc-950'
+                  : 'bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300'
+              }`}
+            >
+              {managePlansMode ? 'Gotowe' : 'Edytuj listę'}
+            </button>
+          )}
+
+          <button
+            onClick={openNewPlanForm}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition"
+          >
+            <Plus className="w-4 h-4" />
+            Nowy plan
+          </button>
+        </div>
+      </div>
+
+      {/* Okno potwierdzenia usunięcia planu treningowego */}
+      {confirmDeleteTemplate && (
+        <div className="bg-red-950/60 border border-red-700 rounded-2xl p-4 space-y-3">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-red-100 space-y-1">
+              <p className="font-bold text-sm text-red-300">
+                Usunąć plan treningowy „{confirmDeleteTemplate.name}”?
+              </p>
+              <p>Wykonane wcześniej treningi pozostaną zapisane w historii.</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setConfirmDeleteTemplate(null)}
+              className="px-3.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs font-semibold rounded-xl"
+            >
+              Anuluj
+            </button>
+            <button
+              onClick={async () => {
+                await api.deleteWorkoutTemplate(confirmDeleteTemplate.id);
+                setConfirmDeleteTemplate(null);
+                await loadPlansAndActive();
+              }}
+              className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl"
+            >
+              Tak, usuń plan
+            </button>
           </div>
         </div>
       )}
@@ -736,13 +1182,20 @@ export function WorkoutTab() {
             {editingTemplateId ? 'Edytuj plan treningowy' : 'Utwórz plan treningowy'}
           </h3>
 
+          {planFormError && (
+            <div className="bg-red-950/60 border border-red-800 text-red-200 text-xs rounded-xl p-3 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{planFormError}</span>
+            </div>
+          )}
+
           <div>
             <label className="block text-[11px] text-zinc-400 mb-1">Nazwa planu treningowego</label>
             <input
               type="text"
               value={planName}
               onChange={(e) => setPlanName(e.target.value)}
-              placeholder="np. Push / Pull / Legs"
+              placeholder="np. Pull / Push / Legs"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm"
             />
           </div>
@@ -757,17 +1210,16 @@ export function WorkoutTab() {
                   <span className="text-[11px] font-bold text-amber-400">
                     Ćwiczenie #{idx + 1}
                   </span>
-                  {planExercises.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPlanExercises(planExercises.filter((_, i) => i !== idx))
-                      }
-                      className="text-zinc-500 hover:text-red-400 p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPlanExercises(planExercises.filter((_, i) => i !== idx))
+                    }
+                    className="text-zinc-500 hover:text-red-400 p-1"
+                    title="Usuń to ćwiczenie"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-12 gap-2">
@@ -897,6 +1349,7 @@ export function WorkoutTab() {
                 onClick={() => {
                   setShowPlanForm(false);
                   setEditingTemplateId(null);
+                  setPlanFormError(null);
                 }}
                 className="px-3 py-2 text-xs text-zinc-400 hover:text-white"
               >
@@ -913,7 +1366,7 @@ export function WorkoutTab() {
         </form>
       )}
 
-      {/* Lista szablonów */}
+      {/* Lista szablonów treningowych */}
       {loading ? (
         <div className="text-center py-8 text-zinc-500 text-sm">Ładowanie planów...</div>
       ) : templates.length === 0 ? (
@@ -922,54 +1375,84 @@ export function WorkoutTab() {
         </div>
       ) : (
         <div className="space-y-3">
-          {templates.map((tpl) => {
+          {templates.map((tpl, idx) => {
             const isExpanded = expandedTemplateId === tpl.id;
             return (
               <div
                 key={tpl.id}
                 className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div
-                    onClick={() => setExpandedTemplateId(isExpanded ? null : tpl.id)}
-                    className="cursor-pointer flex-1"
-                  >
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-bold text-white text-base">{tpl.name}</h3>
-                      <span className="text-xs text-zinc-400 flex items-center gap-0.5">
-                        ({tpl.exercises.length} ćw.)
-                        {isExpanded ? (
-                          <ChevronUp className="w-4 h-4" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
-                      </span>
-                    </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      {tpl.exercises.map((e) => e.exerciseName).join(' • ')}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => openEditPlanForm(tpl)}
-                      className="p-1.5 text-zinc-400 hover:text-amber-400 rounded-lg"
-                      title="Edytuj plan"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={async () => {
-                        await api.deleteWorkoutTemplate(tpl.id);
-                        await loadInitialData();
-                      }}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg"
-                      title="Usuń plan"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">{tpl.name}</h3>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    {tpl.exercises.map((e) => e.exerciseName).join(' • ')}
+                  </p>
                 </div>
+
+                {/* Wyraźne przyciski pod telefon: Podgląd ćwiczeń + Edytuj plan */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedTemplateId(isExpanded ? null : tpl.id)}
+                    className="flex items-center justify-center gap-1.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs py-2 rounded-xl transition"
+                  >
+                    {isExpanded ? (
+                      <>
+                        <ChevronUp className="w-4 h-4 text-amber-400" />
+                        Ukryj ćwiczenia
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4 text-amber-400" />
+                        Ćwiczenia ({tpl.exercises.length})
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openEditPlanForm(tpl)}
+                    className="flex items-center justify-center gap-1.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs py-2 rounded-xl transition"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                    Edytuj plan
+                  </button>
+                </div>
+
+                {/* Kontrolki kolejności (Pull -> Push -> Legs) i usuwania po kliknięciu "Edytuj listę" */}
+                {managePlansMode && (
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => moveTemplate(idx, -1)}
+                        className="p-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 rounded-xl text-zinc-200"
+                        title="Przesuń w górę"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === templates.length - 1}
+                        onClick={() => moveTemplate(idx, 1)}
+                        className="p-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 rounded-xl text-zinc-200"
+                        title="Przesuń w dół"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteTemplate(tpl)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 text-red-400 font-semibold text-xs rounded-xl"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Usuń plan
+                    </button>
+                  </div>
+                )}
 
                 {isExpanded && (
                   <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3 divide-y divide-zinc-800/60 text-xs">
@@ -1001,226 +1484,6 @@ export function WorkoutTab() {
           })}
         </div>
       )}
-
-      {/* Ostatnie treningi (z możliwością dopisania zapomnianego ćwiczenia) */}
-      {history.length > 0 && (
-        <div className="space-y-2.5 pt-2">
-          <h3 className="text-sm font-semibold text-zinc-400 flex items-center gap-1.5 px-1">
-            <History className="w-4 h-4" />
-            Ostatnie treningi
-          </h3>
-          {history.map((session) => {
-            const isExpanded = expandedHistoryId === session.id;
-            const durationMins =
-              session.finishedAt && session.startedAt
-                ? Math.max(
-                    1,
-                    Math.round(
-                      (new Date(session.finishedAt).getTime() -
-                        new Date(session.startedAt).getTime()) /
-                        60000
-                    )
-                  )
-                : null;
-
-            return (
-              <div
-                key={session.id}
-                className="bg-zinc-900/70 border border-zinc-800/80 rounded-2xl p-3.5 space-y-2.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div
-                    onClick={() => setExpandedHistoryId(isExpanded ? null : session.id)}
-                    className="cursor-pointer flex-1"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-semibold text-zinc-200">{session.name}</p>
-                      {isExpanded ? (
-                        <ChevronUp className="w-3.5 h-3.5 text-zinc-400" />
-                      ) : (
-                        <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                      )}
-                    </div>
-                    <p className="text-xs text-zinc-500">
-                      {new Date(session.startedAt).toLocaleDateString('pl-PL')}
-                      {durationMins !== null ? ` • Czas: ${durationMins} min` : ''}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg">
-                      {session.totalVolumeKg} kg tonażu
-                    </span>
-                    <button
-                      onClick={() => handleDeleteHistorySession(session.id)}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg"
-                      title="Usuń trening z historii"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="bg-zinc-950/80 border border-zinc-800/70 rounded-xl p-3 space-y-3 text-xs">
-                    {session.exercises.map((ex) => {
-                      const completedSets = ex.sets.filter((s) => s.isCompleted);
-                      const isCardio =
-                        ex.exerciseType === 'Cardio' || ex.muscleGroup === 'Cardio';
-                      const exVolume = !isCardio
-                        ? completedSets.reduce((acc, s) => acc + s.weightKg * s.reps, 0)
-                        : 0;
-
-                      return (
-                        <div key={ex.exerciseName} className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <p className="font-semibold text-amber-400">
-                              {ex.exerciseName}{' '}
-                              <span className="text-[10px] text-zinc-500 font-normal">
-                                ({ex.muscleGroup})
-                              </span>
-                            </p>
-                            {!isCardio && exVolume > 0 && (
-                              <span className="text-[11px] text-zinc-400">
-                                Suma: {Math.round(exVolume)} kg
-                              </span>
-                            )}
-                          </div>
-                          {completedSets.length === 0 ? (
-                            <p className="text-zinc-500">Brak zaliczonych serii</p>
-                          ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                              {completedSets.map((s) => (
-                                <div
-                                  key={s.id}
-                                  className="bg-zinc-900 border border-zinc-800 px-2.5 py-1 rounded-lg flex justify-between text-zinc-300"
-                                >
-                                  <span className="text-zinc-500">Seria {s.setNumber}</span>
-                                  <span className="font-semibold">
-                                    {isCardio
-                                      ? `${s.reps} min @ ${s.weightKg}%`
-                                      : `${s.reps} powt. × ${s.weightKg} kg`}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Formularz dopisania zapomnianego ćwiczenia / serii do ukończonego treningu */}
-                    {addingToHistorySessionId === session.id ? (
-                      <form
-                        onSubmit={(e) => handleAddSetToCompletedHistory(e, session.id)}
-                        className="pt-2 border-t border-zinc-800 space-y-2"
-                      >
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <input
-                            type="text"
-                            value={historyNewSetForm.exerciseName}
-                            onChange={(e) =>
-                              setHistoryNewSetForm({
-                                ...historyNewSetForm,
-                                exerciseName: e.target.value,
-                              })
-                            }
-                            placeholder="Nazwa ćwiczenia (np. Face Pull)"
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs"
-                          />
-                          <select
-                            value={historyNewSetForm.muscleGroup}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setHistoryNewSetForm({
-                                ...historyNewSetForm,
-                                muscleGroup: val,
-                                exerciseType: val === 'Cardio' ? 'Cardio' : 'Strength',
-                              });
-                            }}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs"
-                          >
-                            {MUSCLE_GROUPS.map((mg) => (
-                              <option key={mg} value={mg}>
-                                {mg}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <div>
-                            <span className="block text-[10px] text-zinc-500">
-                              {historyNewSetForm.exerciseType === 'Cardio'
-                                ? 'Czas (min)'
-                                : 'Powtórzenia'}
-                            </span>
-                            <input
-                              type="number"
-                              value={historyNewSetForm.reps}
-                              onChange={(e) =>
-                                setHistoryNewSetForm({
-                                  ...historyNewSetForm,
-                                  reps: Number(e.target.value),
-                                })
-                              }
-                              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-center text-xs"
-                            />
-                          </div>
-                          <div>
-                            <span className="block text-[10px] text-zinc-500">
-                              {historyNewSetForm.exerciseType === 'Cardio'
-                                ? 'Nachylenie %'
-                                : 'Ciężar (kg)'}
-                            </span>
-                            <input
-                              type="number"
-                              step="0.5"
-                              value={historyNewSetForm.weightKg}
-                              onChange={(e) =>
-                                setHistoryNewSetForm({
-                                  ...historyNewSetForm,
-                                  weightKg: Number(e.target.value),
-                                })
-                              }
-                              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 text-center text-xs"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setAddingToHistorySessionId(null)}
-                            className="text-xs text-zinc-400 hover:text-white px-2 py-1"
-                          >
-                            Anuluj
-                          </button>
-                          <button
-                            type="submit"
-                            className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3 py-1 rounded-lg"
-                          >
-                            Dopisz serię
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setAddingToHistorySessionId(session.id)}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:underline pt-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Dopisz zapomniane ćwiczenie / serię
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -1228,16 +1491,19 @@ export function WorkoutTab() {
 function SetRow({
   set,
   isEditing,
+  isHistoryEdit,
   onToggle,
   onDelete,
 }: {
   set: SetLog;
   isEditing: boolean;
+  isHistoryEdit: boolean;
   onToggle: (weightKg: number, reps: number) => void;
   onDelete: () => void;
 }) {
   const [weight, setWeight] = useState<string>(set.weightKg ? String(set.weightKg) : '');
   const [reps, setReps] = useState<string>(set.reps ? String(set.reps) : '');
+  const [savedFlash, setSavedFlash] = useState(false);
 
   return (
     <div
@@ -1283,9 +1549,17 @@ function SetRow({
         ) : (
           <button
             type="button"
-            onClick={() => onToggle(Number(weight) || 0, Number(reps) || 0)}
+            onClick={() => {
+              onToggle(Number(weight) || 0, Number(reps) || 0);
+              if (isHistoryEdit) {
+                setSavedFlash(true);
+                setTimeout(() => setSavedFlash(false), 1200);
+              }
+            }}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition ${
-              set.isCompleted
+              savedFlash
+                ? 'bg-amber-400 text-zinc-950'
+                : set.isCompleted
                 ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20'
                 : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
             }`}

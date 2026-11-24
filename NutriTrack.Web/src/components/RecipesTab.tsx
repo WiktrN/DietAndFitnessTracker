@@ -11,6 +11,9 @@ import {
   Pencil,
   Sparkles,
   Loader2,
+  ArrowUp,
+  ArrowDown,
+  AlertTriangle,
 } from 'lucide-react';
 import { api } from '../services/api';
 import type { RecipeResponse } from '../types/api';
@@ -30,13 +33,17 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
 
   const [expandedRecipeId, setExpandedRecipeId] = useState<number | null>(null);
 
-  // Panel dodawania przepisu do dziennika (wpisanie gramatury na talerzu + wybór pory dnia)
+  // Tryb zarządzania listą przepisów (kolejność góra/dół + usuwanie)
+  const [manageListMode, setManageListMode] = useState(false);
+  const [confirmDeleteRecipe, setConfirmDeleteRecipe] = useState<RecipeResponse | null>(null);
+
+  // Panel dodawania przepisu do dziennika
   const [loggingRecipe, setLoggingRecipe] = useState<RecipeResponse | null>(null);
   const [weightOnPlate, setWeightOnPlate] = useState<number>(300);
   const [logMealCategory, setLogMealCategory] = useState<string>('Obiad');
   const [customGrams, setCustomGrams] = useState<Record<number, number>>({});
 
-  // Kreator i edytor przepisu (wspólny formularz)
+  // Kreator i edytor zawartości przepisu
   const [showForm, setShowForm] = useState(false);
   const [editingRecipeId, setEditingRecipeId] = useState<number | null>(null);
   const [aiEstimating, setAiEstimating] = useState(false);
@@ -71,6 +78,33 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
   useEffect(() => {
     loadRecipes();
   }, []);
+
+  const moveRecipe = async (index: number, direction: -1 | 1) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= recipes.length) return;
+
+    const copy = [...recipes];
+    const [moved] = copy.splice(index, 1);
+    copy.splice(targetIndex, 0, moved);
+    setRecipes(copy);
+
+    try {
+      await api.reorderRecipes(copy.map((r) => r.id));
+    } catch {
+      await loadRecipes();
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteRecipe) return;
+    try {
+      await api.deleteRecipe(confirmDeleteRecipe.id);
+      setConfirmDeleteRecipe(null);
+      await loadRecipes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się usunąć przepisu.');
+    }
+  };
 
   const openNewForm = () => {
     setEditingRecipeId(null);
@@ -123,7 +157,6 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
       setError(null);
       const estimated = await api.estimateMealOnly(queryText);
 
-      // Dopasowujemy obliczone przez AI wartości do wprowadzonych wierszy
       const updated = valid.map((ing, idx) => {
         const aiMatch = estimated.items[idx];
         if (!aiMatch) return ing;
@@ -237,20 +270,63 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-bold text-white flex items-center gap-2">
           <ChefHat className="w-5 h-5 text-amber-400" />
-          Książka przepisów
+          Przepisy
         </h2>
-        <button
-          onClick={openNewForm}
-          className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition"
-        >
-          <Plus className="w-4 h-4" />
-          Nowy przepis
-        </button>
+        <div className="flex items-center gap-2">
+          {recipes.length > 0 && (
+            <button
+              onClick={() => setManageListMode(!manageListMode)}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                manageListMode
+                  ? 'bg-zinc-200 text-zinc-950'
+                  : 'bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300'
+              }`}
+            >
+              {manageListMode ? 'Gotowe' : 'Edytuj listę'}
+            </button>
+          )}
+          <button
+            onClick={openNewForm}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition"
+          >
+            <Plus className="w-4 h-4" />
+            Nowy przepis
+          </button>
+        </div>
       </div>
+
+      {/* Okno potwierdzenia usunięcia przepisu */}
+      {confirmDeleteRecipe && (
+        <div className="bg-red-950/60 border border-red-700 rounded-2xl p-4 space-y-3">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-red-100 space-y-1">
+              <p className="font-bold text-sm text-red-300">
+                Usunąć przepis „{confirmDeleteRecipe.name}”?
+              </p>
+              <p>Tej operacji nie można cofnąć (wpisy w historii jadłospisu zostaną zachowane).</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setConfirmDeleteRecipe(null)}
+              className="px-3.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs font-semibold rounded-xl"
+            >
+              Anuluj
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl"
+            >
+              Tak, usuń przepis
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-950/60 border border-red-800 text-red-200 text-xs rounded-xl p-3">
@@ -264,7 +340,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
         </div>
       )}
 
-      {/* Kreator / Edytor przepisu z sekcjami, obliczeniem AI i instrukcją krok po kroku */}
+      {/* Kreator / Edytor przepisu */}
       {showForm && (
         <form
           onSubmit={handleSaveRecipe}
@@ -311,14 +387,12 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
 
           <div className="space-y-2.5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <p className="text-xs font-semibold text-zinc-300">
-                Składniki (z podziałem na sekcje):
-              </p>
+              <p className="text-xs font-semibold text-zinc-300">Składniki (z sekcjami):</p>
               <button
                 type="button"
                 disabled={aiEstimating || ingredients.every((i) => !i.name.trim())}
                 onClick={handleCalculateRecipeWithAi}
-                className="inline-flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold text-[11px] px-2.5 py-1 rounded-lg transition disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold text-[11px] px-2.5 py-1.5 rounded-lg transition disabled:opacity-50"
               >
                 {aiEstimating ? (
                   <>
@@ -348,7 +422,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
                       copy[idx].sectionName = e.target.value;
                       setIngredients(copy);
                     }}
-                    placeholder="Sekcja (np. Sos mięsno-pomidorowy, Beszamel)"
+                    placeholder="Sekcja (np. Sos mięsny, Beszamel)"
                     className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-[11px] text-amber-400 font-medium"
                   />
                   {ingredients.length > 1 && (
@@ -357,9 +431,9 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
                       onClick={() =>
                         setIngredients(ingredients.filter((_, i) => i !== idx))
                       }
-                      className="text-zinc-500 hover:text-red-400 p-1"
+                      className="text-zinc-500 hover:text-red-400 p-1.5"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   )}
                 </div>
@@ -372,7 +446,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
                     copy[idx].name = e.target.value;
                     setIngredients(copy);
                   }}
-                  placeholder="Nazwa składnika (np. Mięso mielone z indyka Kraina Mięs)"
+                  placeholder="Nazwa składnika i firma"
                   className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs"
                 />
 
@@ -489,7 +563,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
           <div className="flex justify-end">
             <button
               type="submit"
-              className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-5 py-2 rounded-xl"
+              className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs px-5 py-2.5 rounded-xl"
             >
               {editingRecipeId ? 'Zaktualizuj przepis' : 'Zapisz przepis'}
             </button>
@@ -497,7 +571,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
         </form>
       )}
 
-      {/* Panel dodawania przepisu do dziennika po GRAMATURZE NA TALERZU */}
+      {/* Panel dodawania przepisu do jadłospisu */}
       {loggingRecipe && (
         <form
           onSubmit={handleConfirmCustomLog}
@@ -505,12 +579,12 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
         >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-emerald-400">
-              Dodaj do dziennika: {loggingRecipe.name}
+              Dodaj do jadłospisu: {loggingRecipe.name}
             </h3>
             <button
               type="button"
               onClick={() => setLoggingRecipe(null)}
-              className="text-zinc-400 hover:text-white"
+              className="text-zinc-400 hover:text-white p-1"
             >
               <X className="w-4 h-4" />
             </button>
@@ -519,7 +593,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-xs">
               <label className="block text-[11px] text-zinc-400 mb-1">
-                Ile gramów na talerzu?
+                Gramatura na talerzu
               </label>
               <div className="flex items-center gap-1.5">
                 <input
@@ -527,7 +601,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
                   min={1}
                   value={weightOnPlate}
                   onChange={(e) => setWeightOnPlate(Number(e.target.value))}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg py-1 text-center font-bold text-white"
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg py-1.5 text-center font-bold text-white"
                 />
                 <span className="text-zinc-400 font-semibold">g</span>
               </div>
@@ -551,7 +625,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
 
           <div className="space-y-1.5">
             <p className="text-[11px] text-zinc-400">
-              Opcjonalna korekta składników w całym garnku / naczyniu (np. mniej cebuli):
+              Opcjonalna korekta składników w całej potrawie:
             </p>
             {loggingRecipe.ingredients.map((ing) => (
               <div
@@ -583,7 +657,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
             return (
               <div className="bg-emerald-950/30 border border-emerald-800/40 rounded-xl p-2.5 text-xs text-center text-emerald-300 space-y-0.5">
                 <p>
-                  Waga całej potrawy: <strong>{preview.batchGrams}g</strong> • Na talerzu:{' '}
+                  Waga całości: <strong>{preview.batchGrams}g</strong> • Na talerzu:{' '}
                   <strong>{weightOnPlate}g</strong>
                 </p>
                 <p>
@@ -598,12 +672,12 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
             type="submit"
             className="w-full bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs py-2.5 rounded-xl transition"
           >
-            Zapisz w dzienniku ({selectedDate})
+            Zapisz w jadłospisie ({selectedDate})
           </button>
         </form>
       )}
 
-      {/* Lista zapisanych przepisów */}
+      {/* Mobilne karty zapisanych przepisów z wygodnymi, dużymi przyciskami */}
       {loading ? (
         <div className="text-center py-8 text-zinc-500 text-sm">Ładowanie przepisów...</div>
       ) : recipes.length === 0 ? (
@@ -612,7 +686,7 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
         </div>
       ) : (
         <div className="space-y-3">
-          {recipes.map((recipe) => {
+          {recipes.map((recipe, idx) => {
             const isExpanded = expandedRecipeId === recipe.id;
             const totalWeight = Math.round(
               recipe.ingredients.reduce((s, i) => s + i.amountInGrams, 0)
@@ -632,48 +706,81 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
                 key={recipe.id}
                 className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div
-                    onClick={() => setExpandedRecipeId(isExpanded ? null : recipe.id)}
-                    className="cursor-pointer flex-1"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <h3 className="font-bold text-white text-base">{recipe.name}</h3>
-                      {isExpanded ? (
-                        <ChevronUp className="w-4 h-4 text-zinc-400" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-zinc-400" />
-                      )}
-                    </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Całość ({totalWeight}g):{' '}
-                      <span className="text-amber-400 font-semibold">
-                        {recipe.totalCalories} kcal
-                      </span>{' '}
-                      • B: {recipe.totalProtein}g • W: {recipe.totalCarbs}g • T: {recipe.totalFat}g
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => openEditForm(recipe)}
-                      className="p-1.5 text-zinc-400 hover:text-amber-400 rounded-lg"
-                      title="Edytuj przepis (składniki lub opis przygotowania)"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={async () => {
-                        await api.deleteRecipe(recipe.id);
-                        await loadRecipes();
-                      }}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg"
-                      title="Usuń przepis"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                <div>
+                  <h3 className="font-bold text-white text-base leading-snug">{recipe.name}</h3>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    Całość ({totalWeight}g):{' '}
+                    <span className="text-amber-400 font-semibold">
+                      {recipe.totalCalories} kcal
+                    </span>{' '}
+                    • B: {recipe.totalProtein}g • W: {recipe.totalCarbs}g • T: {recipe.totalFat}g
+                  </p>
                 </div>
+
+                {/* Wyraźne, szerokie przyciski akcji dopasowane pod telefon */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedRecipeId(isExpanded ? null : recipe.id)}
+                    className="flex items-center justify-center gap-1.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs py-2.5 rounded-xl transition"
+                  >
+                    {isExpanded ? (
+                      <>
+                        <ChevronUp className="w-4 h-4 text-amber-400" />
+                        Ukryj szczegóły
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4 text-amber-400" />
+                        Składniki i opis
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openEditForm(recipe)}
+                    className="flex items-center justify-center gap-1.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-semibold text-xs py-2.5 rounded-xl transition"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                    Edytuj przepis
+                  </button>
+                </div>
+
+                {/* Kontrolki kolejności i usuwania widoczne dopiero po kliknięciu "Edytuj listę" */}
+                {manageListMode && (
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => moveRecipe(idx, -1)}
+                        className="p-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 rounded-xl text-zinc-200"
+                        title="Przesuń w górę"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === recipes.length - 1}
+                        onClick={() => moveRecipe(idx, 1)}
+                        className="p-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 rounded-xl text-zinc-200"
+                        title="Przesuń w dół"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteRecipe(recipe)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 text-red-400 font-semibold text-xs rounded-xl"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Usuń przepis
+                    </button>
+                  </div>
+                )}
 
                 {isExpanded && (
                   <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3 space-y-3 text-xs">
@@ -717,10 +824,10 @@ export function RecipesTab({ selectedDate, onMealLogged }: RecipesTabProps) {
 
                 <button
                   onClick={() => openCustomLogPanel(recipe)}
-                  className="w-full flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs py-2.5 rounded-xl transition"
+                  className="w-full flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs py-2.5 rounded-xl transition"
                 >
-                  <CalendarPlus className="w-4 h-4 text-amber-400" />
-                  Dodaj do dziennika (wpisz gramaturę na talerzu)
+                  <CalendarPlus className="w-4 h-4" />
+                  Dodaj do jadłospisu
                 </button>
               </div>
             );

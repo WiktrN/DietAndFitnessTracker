@@ -54,7 +54,7 @@ export function App() {
         {activeTab === 'workout' && <WorkoutTab />}
       </main>
 
-      {/* Dolny pasek nawigacji: Przepisy (lewo) • Dieta & AI (środek) • Trening (prawo) */}
+      {/* Dolny pasek nawigacji: Przepisy • Jadłospis • Trening */}
       <nav className="fixed bottom-0 inset-x-0 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 z-20">
         <div className="max-w-xl mx-auto grid grid-cols-3">
           <button
@@ -78,7 +78,7 @@ export function App() {
             }`}
           >
             <Utensils className="w-5 h-5" />
-            <span>Dieta & AI</span>
+            <span>Jadłospis</span>
           </button>
 
           <button
