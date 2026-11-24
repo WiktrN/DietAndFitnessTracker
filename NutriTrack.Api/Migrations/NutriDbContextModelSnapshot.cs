@@ -184,6 +184,9 @@ namespace NutriTrack.Api.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Instructions")
                         .HasColumnType("TEXT");
 
@@ -233,6 +236,9 @@ namespace NutriTrack.Api.Migrations
 
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()

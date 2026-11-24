@@ -134,11 +134,6 @@ public class WorkoutSessionsController : ControllerBase
             return NotFound($"Nie znaleziono sesji treningowej o ID {sessionId}.");
         }
 
-        if (session.FinishedAt != null)
-        {
-            return BadRequest("Nie można dodać serii do zakończonego treningu.");
-        }
-
         var normalizedName = dto.ExerciseName.Trim();
         var existingExerciseSets = session.Sets
             .Where(s => s.ExerciseName.Equals(normalizedName, StringComparison.OrdinalIgnoreCase))
@@ -161,6 +156,8 @@ public class WorkoutSessionsController : ControllerBase
         var muscleGroup = firstExisting?.MuscleGroup ?? dto.MuscleGroup;
         var exerciseType = firstExisting?.ExerciseType ?? dto.ExerciseType;
 
+        var isAlreadyFinished = session.FinishedAt != null;
+
         var newSet = new ExerciseSetLog
         {
             WorkoutSessionId = session.Id,
@@ -173,7 +170,8 @@ public class WorkoutSessionsController : ControllerBase
             ExerciseType = exerciseType,
             WeightKg = lastSetInCurrentSession?.WeightKg ?? prevHistorySet?.WeightKg ?? 0,
             Reps = lastSetInCurrentSession?.Reps ?? prevHistorySet?.Reps ?? 0,
-            IsCompleted = false
+            IsCompleted = isAlreadyFinished,
+            CompletedAt = isAlreadyFinished ? (session.FinishedAt ?? DateTime.UtcNow) : null
         };
 
         _context.ExerciseSetLogs.Add(newSet);
@@ -393,14 +391,29 @@ public class WorkoutSessionsController : ControllerBase
     }
 
     [HttpGet("history")]
-    public async Task<ActionResult<List<WorkoutSessionResponseDto>>> GetWorkoutHistory([FromQuery] int limit = 10)
+    public async Task<ActionResult<List<WorkoutSessionResponseDto>>> GetWorkoutHistory(
+        [FromQuery] int? year = null,
+        [FromQuery] int? month = null,
+        [FromQuery] int limit = 30)
     {
-        var sessions = await _context.WorkoutSessions
+        var query = _context.WorkoutSessions
             .AsNoTracking()
             .Include(s => s.Sets)
-            .Where(s => s.FinishedAt != null)
+            .Where(s => s.FinishedAt != null);
+
+        if (year.HasValue && month.HasValue && month >= 1 && month <= 12)
+        {
+            var firstDay = new DateOnly(year.Value, month.Value, 1);
+            var nextMonth = firstDay.AddMonths(1);
+            var startUtc = firstDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            var endUtc = nextMonth.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+            query = query.Where(s => s.StartedAt >= startUtc && s.StartedAt < endUtc);
+        }
+
+        var sessions = await query
             .OrderByDescending(s => s.StartedAt)
-            .Take(Math.Clamp(limit, 1, 50))
+            .Take(Math.Clamp(limit, 1, 100))
             .ToListAsync();
 
         var result = new List<WorkoutSessionResponseDto>();

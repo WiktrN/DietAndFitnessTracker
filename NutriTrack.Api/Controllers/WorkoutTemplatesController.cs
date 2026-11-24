@@ -23,7 +23,8 @@ public class WorkoutTemplatesController : ControllerBase
         var templates = await _context.WorkoutTemplates
             .AsNoTracking()
             .Include(t => t.Exercises.OrderBy(e => e.OrderIndex))
-            .OrderBy(t => t.Id)
+            .OrderBy(t => t.DisplayOrder)
+            .ThenBy(t => t.Id)
             .ToListAsync();
 
         return Ok(templates.Select(MapToResponseDto).ToList());
@@ -131,6 +132,26 @@ public class WorkoutTemplatesController : ControllerBase
         await _context.SaveChangesAsync();
 
         return Ok(MapToResponseDto(template));
+    }
+
+    [HttpPut("reorder")]
+    public async Task<IActionResult> ReorderTemplates([FromBody] List<int> orderedIds)
+    {
+        var templates = await _context.WorkoutTemplates
+            .Where(t => orderedIds.Contains(t.Id))
+            .ToListAsync();
+
+        for (int i = 0; i < orderedIds.Count; i++)
+        {
+            var tpl = templates.FirstOrDefault(t => t.Id == orderedIds[i]);
+            if (tpl != null)
+            {
+                tpl.DisplayOrder = i + 1;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpDelete("{id:int}")]

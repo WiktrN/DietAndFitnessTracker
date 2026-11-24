@@ -23,7 +23,8 @@ public class RecipesController : ControllerBase
         var recipes = await _context.Recipes
             .AsNoTracking()
             .Include(r => r.Ingredients)
-            .OrderByDescending(r => r.Id)
+            .OrderBy(r => r.DisplayOrder)
+            .ThenByDescending(r => r.Id)
             .ToListAsync();
 
         return Ok(recipes.Select(MapToResponseDto).ToList());
@@ -128,6 +129,26 @@ public class RecipesController : ControllerBase
         await _context.SaveChangesAsync();
 
         return Ok(MapToResponseDto(recipe));
+    }
+
+    [HttpPut("reorder")]
+    public async Task<IActionResult> ReorderRecipes([FromBody] List<int> orderedIds)
+    {
+        var recipes = await _context.Recipes
+            .Where(r => orderedIds.Contains(r.Id))
+            .ToListAsync();
+
+        for (int i = 0; i < orderedIds.Count; i++)
+        {
+            var rec = recipes.FirstOrDefault(r => r.Id == orderedIds[i]);
+            if (rec != null)
+            {
+                rec.DisplayOrder = i + 1;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpPost("from-ai")]
