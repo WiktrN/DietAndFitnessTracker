@@ -1,4 +1,5 @@
-﻿using System.Net.Http.Headers;
+﻿using System.Collections.Concurrent;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
@@ -8,6 +9,15 @@ public class HybridProductResearchService : IProductResearchService
 {
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
+    private static readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> BasicRawIngredients = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "woda", "jajko", "jajka", "ryż", "ryż biały", "ryż basmati", "ziemniaki",
+        "pierś z kurczaka", "pierś z indyka", "filet z kurczaka", "filet z indyka",
+        "banan", "jabłko", "płatki owsiane", "oliwa z oliwek", "oliwa", "masło",
+        "cebula", "czosnek", "pomidor", "ogórek", "papryka", "marchew", "szpinak"
+    };
 
     public HybridProductResearchService(HttpClient httpClient, IConfiguration configuration)
     {
@@ -25,24 +35,35 @@ public class HybridProductResearchService : IProductResearchService
         var tavilyApiKey = _configuration["AiConfig:TavilyApiKey"];
         var resultsBuilder = new StringBuilder();
 
-        foreach (var query in extractedProductQueries.Distinct().Take(6))
+        foreach (var rawQuery in extractedProductQueries.Distinct().Take(6))
         {
-            string? productInfo = null;
+            var query = rawQuery.Trim();
+            if (string.IsNullOrWhiteSpace(query))
+                continue;
 
-            // 1. Próba przez Tavily (jeśli klucz jest skonfigurowany)
-            if (!string.IsNullOrWhiteSpace(tavilyApiKey))
+            // 1. Oszczędność kredytów: podstawowe nieprzetworzone surowce LLM zna sam
+            if (BasicRawIngredients.Contains(query))
+                continue;
+
+            // 2. Oszczędność kredytów: sprawdzenie pamięci podręcznej
+            if (_cache.TryGetValue(query, out var cachedInfo))
+            {
+                resultsBuilder.AppendLine($"- Produkt [{query}]: {cachedInfo}");
+                continue;
+            }
+
+            // 3. Najpierw darmowy Open Food Facts (polskie etykiety sklepów)
+            string? productInfo = await SearchOpenFoodFactsAsync(query);
+
+            // 4. Dopiero gdy brak w Open Food Facts -> płatne Tavily (1 kredyt)
+            if (string.IsNullOrWhiteSpace(productInfo) && !string.IsNullOrWhiteSpace(tavilyApiKey))
             {
                 productInfo = await SearchWithTavilyAsync(query, tavilyApiKey.Trim());
             }
 
-            // 2. Fallback na darmowy Open Food Facts (zawsze dostępny bez klucza)
-            if (string.IsNullOrWhiteSpace(productInfo))
-            {
-                productInfo = await SearchOpenFoodFactsAsync(query);
-            }
-
             if (!string.IsNullOrWhiteSpace(productInfo))
             {
+                _cache[query] = productInfo;
                 resultsBuilder.AppendLine($"- Produkt [{query}]: {productInfo}");
             }
         }
@@ -57,10 +78,11 @@ public class HybridProductResearchService : IProductResearchService
             var payload = new
             {
                 api_key = apiKey,
-                query = $"{productQuery} wartości odżywcze kcal białko tłuszcz węglowodany na 100g",
+                query = $"{productQuery} kcal białko węglowodany tłuszcz w 100g",
                 search_depth = "basic",
                 max_results = 2,
-                include_answer = true
+                include_answer = true,
+                include_raw_content = false
             };
 
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.tavily.com/search")
@@ -80,7 +102,8 @@ public class HybridProductResearchService : IProductResearchService
             if (doc.RootElement.TryGetProperty("answer", out var answerProp) &&
                 !string.IsNullOrWhiteSpace(answerProp.GetString()))
             {
-                return answerProp.GetString();
+                var answer = answerProp.GetString()!;
+                return answer.Length > 400 ? answer[..400] : answer;
             }
 
             if (doc.RootElement.TryGetProperty("results", out var resultsProp) &&
@@ -88,14 +111,15 @@ public class HybridProductResearchService : IProductResearchService
             {
                 var snippets = resultsProp.EnumerateArray()
                     .Select(r => r.TryGetProperty("content", out var c) ? c.GetString() : null)
-                    .Where(s => !string.IsNullOrWhiteSpace(s));
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s!.Length > 300 ? s[..300] : s);
 
                 return string.Join(" | ", snippets);
             }
         }
         catch
         {
-            // W razie błędu sieciowego przechodzimy płynnie do Open Food Facts
+            // Ignorujemy błędy sieciowe
         }
 
         return null;

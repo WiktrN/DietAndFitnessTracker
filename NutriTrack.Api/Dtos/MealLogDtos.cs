@@ -7,7 +7,8 @@ public record LogMealRequestDto(
     double TotalCarbs,
     double TotalFat,
     DateTime? Date = null,
-    int? RecipeId = null
+    int? RecipeId = null,
+    string MealCategory = "Posiłek"
 );
 
 public record MealLogResponseDto(
@@ -18,7 +19,8 @@ public record MealLogResponseDto(
     double TotalProtein,
     double TotalCarbs,
     double TotalFat,
-    int? RecipeId
+    int? RecipeId,
+    string MealCategory
 );
 
 public record DailyNutritionSummaryDto(
@@ -33,7 +35,8 @@ public record DailyNutritionSummaryDto(
 
 public record LogMealFromRecipeRequestDto(
     double ServingsConsumed = 1.0,
-    DateTime? Date = null
+    DateTime? Date = null,
+    string MealCategory = "Posiłek"
 );
 
 public record DailyCalendarStatusDto(
@@ -49,7 +52,9 @@ public record IngredientOverrideDto(
 );
 
 public record LogFromRecipeCustomRequestDto(
-    double ServingsConsumed = 1,
+    double? WeightOnPlateGrams = null,
+    double ServingsConsumed = 1.0,
     DateTime? Date = null,
+    string MealCategory = "Posiłek",
     List<IngredientOverrideDto>? IngredientOverrides = null
 );

@@ -324,6 +324,74 @@ public class WorkoutSessionsController : ControllerBase
         return Ok(await BuildSessionResponseAsync(session));
     }
 
+    [HttpGet("monthly-dates")]
+    public async Task<ActionResult<List<DateOnly>>> GetMonthlyWorkoutDates(
+        [FromQuery] int year,
+        [FromQuery] int month)
+    {
+        var firstDay = new DateOnly(year, month, 1);
+        var nextMonth = firstDay.AddMonths(1);
+        var startUtc = firstDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var endUtc = nextMonth.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+        var dates = await _context.WorkoutSessions
+            .AsNoTracking()
+            .Where(s => s.FinishedAt != null && s.StartedAt >= startUtc && s.StartedAt < endUtc)
+            .Select(s => DateOnly.FromDateTime(s.StartedAt))
+            .Distinct()
+            .ToListAsync();
+
+        return Ok(dates);
+    }
+
+    [HttpPost("{sessionId:int}/history-sets")]
+    public async Task<ActionResult<WorkoutSessionResponseDto>> AddCompletedSetToHistory(
+        int sessionId,
+        [FromBody] AddHistorySetRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.ExerciseName))
+        {
+            return BadRequest("Nazwa ćwiczenia nie może być pusta.");
+        }
+
+        var session = await _context.WorkoutSessions
+            .Include(s => s.Sets)
+            .FirstOrDefaultAsync(s => s.Id == sessionId);
+
+        if (session == null)
+        {
+            return NotFound($"Nie znaleziono treningu o ID {sessionId}.");
+        }
+
+        var normalized = dto.ExerciseName.Trim();
+        var existing = session.Sets
+            .Where(s => s.ExerciseName.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var nextSetNumber = existing.Count > 0 ? existing.Max(s => s.SetNumber) + 1 : 1;
+        var exerciseOrder = existing.Count > 0
+            ? existing.First().ExerciseOrder
+            : (session.Sets.Count > 0 ? session.Sets.Max(s => s.ExerciseOrder) + 1 : 1);
+
+        session.Sets.Add(new ExerciseSetLog
+        {
+            WorkoutSessionId = session.Id,
+            ExerciseName = normalized,
+            ExerciseOrder = exerciseOrder,
+            SetNumber = nextSetNumber,
+            MuscleGroup = string.IsNullOrWhiteSpace(dto.MuscleGroup) ? "Ogólne" : dto.MuscleGroup.Trim(),
+            ExerciseType = string.IsNullOrWhiteSpace(dto.ExerciseType) ? "Strength" : dto.ExerciseType.Trim(),
+            Reps = dto.Reps,
+            WeightKg = Math.Round(dto.WeightKg, 2),
+            RestSeconds = 120,
+            IsCompleted = true,
+            CompletedAt = session.FinishedAt ?? session.StartedAt
+        });
+
+        await _context.SaveChangesAsync();
+        return Ok(await BuildSessionResponseAsync(session));
+    }
+
     [HttpGet("history")]
     public async Task<ActionResult<List<WorkoutSessionResponseDto>>> GetWorkoutHistory([FromQuery] int limit = 10)
     {

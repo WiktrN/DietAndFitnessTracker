@@ -22,12 +22,14 @@ public record EstimatedMealResponseDto(
 
 public record EstimateAndLogRequestDto(
     string Text,
-    DateTime? Date = null
+    DateTime? Date = null,
+    string MealCategory = "Posiłek"
 );
 
 public record EstimatedAndLoggedMealResponseDto(
     int MealLogId,
     DateTime Date,
+    string MealCategory,
     string MealName,
     double TotalCalories,
     double TotalProtein,

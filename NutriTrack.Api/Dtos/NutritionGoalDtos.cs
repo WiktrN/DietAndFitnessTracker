@@ -4,7 +4,8 @@ public record SetNutritionGoalRequestDto(
     double TargetCalories,
     double TargetProtein,
     double TargetCarbs,
-    double TargetFat
+    double TargetFat,
+    DateOnly? EffectiveFrom = null
 );
 
 public record NutritionGoalResponseDto(
@@ -13,6 +14,7 @@ public record NutritionGoalResponseDto(
     double TargetProtein,
     double TargetCarbs,
     double TargetFat,
+    DateOnly EffectiveFrom,
     DateTime UpdatedAt
 );
 

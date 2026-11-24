@@ -77,3 +77,11 @@ public record WorkoutSessionResponseDto(
     double TotalVolumeKg,
     List<SessionExerciseGroupDto> Exercises
 );
+
+public record AddHistorySetRequestDto(
+    string ExerciseName,
+    string MuscleGroup,
+    string ExerciseType,
+    int Reps,
+    double WeightKg
+);

@@ -52,6 +52,8 @@ public class NutritionController : ControllerBase
             return StatusCode(500, "Nie udało się przetworzyć posiłku przez AI.");
         }
 
+        var category = string.IsNullOrWhiteSpace(dto.MealCategory) ? "Posiłek" : dto.MealCategory.Trim();
+
         var mealLog = new MealLog
         {
             MealName = estimated.MealName.Trim(),
@@ -59,7 +61,8 @@ public class NutritionController : ControllerBase
             TotalProtein = estimated.TotalProtein,
             TotalCarbs = estimated.TotalCarbs,
             TotalFat = estimated.TotalFat,
-            Date = dto.Date?.ToUniversalTime() ?? DateTime.UtcNow
+            Date = dto.Date?.ToUniversalTime() ?? DateTime.UtcNow,
+            MealCategory = category
         };
 
         _context.MealLogs.Add(mealLog);
@@ -68,6 +71,7 @@ public class NutritionController : ControllerBase
         var response = new EstimatedAndLoggedMealResponseDto(
             MealLogId: mealLog.Id,
             Date: mealLog.Date,
+            MealCategory: mealLog.MealCategory,
             MealName: mealLog.MealName,
             TotalCalories: mealLog.TotalCalories,
             TotalProtein: mealLog.TotalProtein,

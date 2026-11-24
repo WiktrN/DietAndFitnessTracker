@@ -47,7 +47,8 @@ public class MealLogsController : ControllerBase
             TotalCarbs = Math.Round(dto.TotalCarbs, 1),
             TotalFat = Math.Round(dto.TotalFat, 1),
             Date = dto.Date?.ToUniversalTime() ?? DateTime.UtcNow,
-            RecipeId = dto.RecipeId
+            RecipeId = dto.RecipeId,
+            MealCategory = string.IsNullOrWhiteSpace(dto.MealCategory) ? "Posiłek" : dto.MealCategory.Trim()
         };
 
         _context.MealLogs.Add(mealLog);
@@ -98,7 +99,8 @@ public class MealLogsController : ControllerBase
             TotalCarbs = Math.Round(totalCarbs, 1),
             TotalFat = Math.Round(totalFat, 1),
             Date = dto?.Date?.ToUniversalTime() ?? DateTime.UtcNow,
-            RecipeId = recipe.Id
+            RecipeId = recipe.Id,
+            MealCategory = string.IsNullOrWhiteSpace(dto?.MealCategory) ? "Posiłek" : dto.MealCategory.Trim()
         };
 
         _context.MealLogs.Add(mealLog);
@@ -133,7 +135,7 @@ public class MealLogsController : ControllerBase
         var meals = await _context.MealLogs
             .AsNoTracking()
             .Where(m => m.Date >= startOfDay && m.Date < endOfDay)
-            .OrderBy(m => m.Date)
+            .OrderBy(m => m.Id)
             .ToListAsync();
 
         var mealDtos = meals.Select(MapToResponseDto).ToList();
@@ -145,8 +147,11 @@ public class MealLogsController : ControllerBase
 
         var goal = await _context.NutritionGoals
             .AsNoTracking()
-            .OrderByDescending(g => g.Id)
-            .FirstOrDefaultAsync();
+            .Where(g => g.EffectiveFrom <= targetDate)
+            .OrderByDescending(g => g.EffectiveFrom)
+            .ThenByDescending(g => g.Id)
+            .FirstOrDefaultAsync()
+            ?? await _context.NutritionGoals.AsNoTracking().OrderBy(g => g.Id).FirstOrDefaultAsync();
 
         GoalProgressDto? goalProgress = null;
         if (goal != null)
@@ -215,10 +220,11 @@ public class MealLogsController : ControllerBase
             .Where(m => m.Date >= startUtc && m.Date < endUtc)
             .ToListAsync();
 
-        var goal = await _context.NutritionGoals
+        var allGoals = await _context.NutritionGoals
             .AsNoTracking()
-            .OrderByDescending(g => g.Id)
-            .FirstOrDefaultAsync();
+            .OrderByDescending(g => g.EffectiveFrom)
+            .ThenByDescending(g => g.Id)
+            .ToListAsync();
 
         var daysCount = DateTime.DaysInMonth(year, month);
         var result = new List<DailyCalendarStatusDto>(daysCount);
@@ -226,6 +232,7 @@ public class MealLogsController : ControllerBase
         for (int day = 1; day <= daysCount; day++)
         {
             var currentDate = new DateOnly(year, month, day);
+            var goal = allGoals.FirstOrDefault(g => g.EffectiveFrom <= currentDate) ?? allGoals.LastOrDefault();
             var dayMeals = meals.Where(m => DateOnly.FromDateTime(m.Date) == currentDate).ToList();
 
             if (dayMeals.Count == 0)
@@ -274,11 +281,6 @@ public class MealLogsController : ControllerBase
         int recipeId,
         [FromBody] LogFromRecipeCustomRequestDto dto)
     {
-        if (dto.ServingsConsumed <= 0)
-        {
-            return BadRequest("Liczba porcji musi być większa od zera.");
-        }
-
         var recipe = await _context.Recipes
             .Include(r => r.Ingredients)
             .FirstOrDefaultAsync(r => r.Id == recipeId);
@@ -292,35 +294,48 @@ public class MealLogsController : ControllerBase
             .ToDictionary(o => o.IngredientId, o => o.CustomAmountInGrams)
             ?? new Dictionary<int, double>();
 
-        double batchCalories = 0, batchProtein = 0, batchCarbs = 0, batchFat = 0;
+        double batchGrams = 0, batchCalories = 0, batchProtein = 0, batchCarbs = 0, batchFat = 0;
 
         foreach (var ing in recipe.Ingredients)
         {
-            double ratio = 1.0;
-            if (overrides.TryGetValue(ing.Id, out var customGrams) && ing.AmountInGrams > 0)
-            {
-                ratio = Math.Max(0, customGrams) / ing.AmountInGrams;
-            }
+            double actualGrams = overrides.TryGetValue(ing.Id, out var customGrams)
+                ? Math.Max(0, customGrams)
+                : ing.AmountInGrams;
 
+            double ratio = ing.AmountInGrams > 0 ? actualGrams / ing.AmountInGrams : 1.0;
+
+            batchGrams += actualGrams;
             batchCalories += ing.Calories * ratio;
             batchProtein += ing.Protein * ratio;
             batchCarbs += ing.Carbs * ratio;
             batchFat += ing.Fat * ratio;
         }
 
-        var portionFactor = dto.ServingsConsumed / (recipe.Servings > 0 ? recipe.Servings : 1);
+        double factor;
+        string displayName;
+
+        if (dto.WeightOnPlateGrams.HasValue && dto.WeightOnPlateGrams.Value > 0 && batchGrams > 0)
+        {
+            factor = dto.WeightOnPlateGrams.Value / batchGrams;
+            displayName = $"{recipe.Name} ({Math.Round(dto.WeightOnPlateGrams.Value)}g)";
+        }
+        else
+        {
+            var servings = dto.ServingsConsumed > 0 ? dto.ServingsConsumed : 1.0;
+            factor = servings / (recipe.Servings > 0 ? recipe.Servings : 1);
+            displayName = servings == 1.0 ? recipe.Name : $"{recipe.Name} ({servings} porcji)";
+        }
 
         var mealLog = new MealLog
         {
             Date = dto.Date?.ToUniversalTime() ?? DateTime.UtcNow,
-            MealName = dto.ServingsConsumed == 1
-                ? recipe.Name
-                : $"{recipe.Name} ({dto.ServingsConsumed} porcji)",
-            TotalCalories = Math.Round(batchCalories * portionFactor, 1),
-            TotalProtein = Math.Round(batchProtein * portionFactor, 1),
-            TotalCarbs = Math.Round(batchCarbs * portionFactor, 1),
-            TotalFat = Math.Round(batchFat * portionFactor, 1),
-            RecipeId = recipe.Id
+            MealName = displayName,
+            TotalCalories = Math.Round(batchCalories * factor, 1),
+            TotalProtein = Math.Round(batchProtein * factor, 1),
+            TotalCarbs = Math.Round(batchCarbs * factor, 1),
+            TotalFat = Math.Round(batchFat * factor, 1),
+            RecipeId = recipe.Id,
+            MealCategory = string.IsNullOrWhiteSpace(dto.MealCategory) ? "Posiłek" : dto.MealCategory.Trim()
         };
 
         _context.MealLogs.Add(mealLog);
@@ -338,6 +353,7 @@ public class MealLogsController : ControllerBase
             TotalProtein: mealLog.TotalProtein,
             TotalCarbs: mealLog.TotalCarbs,
             TotalFat: mealLog.TotalFat,
-            RecipeId: mealLog.RecipeId
+            RecipeId: mealLog.RecipeId,
+            MealCategory: mealLog.MealCategory
         );
 }

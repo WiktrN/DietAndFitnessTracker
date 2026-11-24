@@ -142,6 +142,16 @@ public class WorkoutTemplatesController : ControllerBase
             return NotFound($"Nie znaleziono planu treningowego o ID {id}.");
         }
 
+        // Odpinamy plan od historycznych i aktywnych sesji, aby zachować historię treningów
+        var linkedSessions = await _context.WorkoutSessions
+            .Where(s => s.WorkoutTemplateId == id)
+            .ToListAsync();
+
+        foreach (var session in linkedSessions)
+        {
+            session.WorkoutTemplateId = null;
+        }
+
         _context.WorkoutTemplates.Remove(template);
         await _context.SaveChangesAsync();
 

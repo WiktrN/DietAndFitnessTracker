@@ -18,12 +18,17 @@ public class GoalsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<NutritionGoalResponseDto>> GetCurrentGoal()
+    public async Task<ActionResult<NutritionGoalResponseDto>> GetCurrentGoal([FromQuery] DateOnly? date = null)
     {
+        var targetDate = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+
         var goal = await _context.NutritionGoals
             .AsNoTracking()
-            .OrderByDescending(g => g.Id)
-            .FirstOrDefaultAsync();
+            .Where(g => g.EffectiveFrom <= targetDate)
+            .OrderByDescending(g => g.EffectiveFrom)
+            .ThenByDescending(g => g.Id)
+            .FirstOrDefaultAsync()
+            ?? await _context.NutritionGoals.AsNoTracking().OrderBy(g => g.Id).FirstOrDefaultAsync();
 
         if (goal == null)
         {
@@ -36,6 +41,7 @@ public class GoalsController : ControllerBase
             goal.TargetProtein,
             goal.TargetCarbs,
             goal.TargetFat,
+            goal.EffectiveFrom,
             goal.UpdatedAt
         ));
     }
@@ -48,11 +54,17 @@ public class GoalsController : ControllerBase
             return BadRequest("Kalorie muszą być większe od zera, a makroskładniki nie mogą być ujemne.");
         }
 
-        var goal = await _context.NutritionGoals.OrderByDescending(g => g.Id).FirstOrDefaultAsync();
+        var effectiveDate = dto.EffectiveFrom ?? DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var goal = await _context.NutritionGoals
+            .FirstOrDefaultAsync(g => g.EffectiveFrom == effectiveDate);
 
         if (goal == null)
         {
-            goal = new NutritionGoal();
+            goal = new NutritionGoal
+            {
+                EffectiveFrom = effectiveDate
+            };
             _context.NutritionGoals.Add(goal);
         }
 
@@ -70,6 +82,7 @@ public class GoalsController : ControllerBase
             goal.TargetProtein,
             goal.TargetCarbs,
             goal.TargetFat,
+            goal.EffectiveFrom,
             goal.UpdatedAt
         ));
     }

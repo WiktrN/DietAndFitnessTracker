@@ -10,6 +10,7 @@ public class MealLog
     public double TotalProtein { get; set; }
     public double TotalCarbs { get; set; }
     public double TotalFat { get; set; }
+    public string MealCategory { get; set; } = "Posiłek";
 
     public int? RecipeId { get; set; }
     public Recipe? Recipe { get; set; }

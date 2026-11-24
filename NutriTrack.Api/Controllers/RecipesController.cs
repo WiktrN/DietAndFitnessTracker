@@ -82,6 +82,54 @@ public class RecipesController : ControllerBase
         return CreatedAtAction(nameof(GetRecipeById), new { id = recipe.Id }, MapToResponseDto(recipe));
     }
 
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<RecipeResponseDto>> UpdateRecipe(
+        int id,
+        [FromBody] CreateRecipeRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Name))
+        {
+            return BadRequest("Nazwa przepisu nie może być pusta.");
+        }
+
+        if (dto.Ingredients == null || dto.Ingredients.Count == 0)
+        {
+            return BadRequest("Przepis musi zawierać przynajmniej jeden składnik.");
+        }
+
+        var recipe = await _context.Recipes
+            .Include(r => r.Ingredients)
+            .FirstOrDefaultAsync(r => r.Id == id);
+
+        if (recipe == null)
+        {
+            return NotFound($"Nie znaleziono przepisu o ID {id}.");
+        }
+
+        recipe.Name = dto.Name.Trim();
+        recipe.Description = dto.Description?.Trim();
+        recipe.Instructions = dto.Instructions?.Trim();
+        recipe.Servings = dto.Servings > 0 ? dto.Servings : 1;
+
+        _context.Ingredients.RemoveRange(recipe.Ingredients);
+
+        recipe.Ingredients = dto.Ingredients.Select(i => new Ingredient
+        {
+            RecipeId = recipe.Id,
+            Name = i.Name.Trim(),
+            AmountInGrams = i.AmountInGrams,
+            Calories = i.Calories,
+            Protein = i.Protein,
+            Carbs = i.Carbs,
+            Fat = i.Fat,
+            SectionName = string.IsNullOrWhiteSpace(i.SectionName) ? "Składniki główne" : i.SectionName.Trim()
+        }).ToList();
+
+        await _context.SaveChangesAsync();
+
+        return Ok(MapToResponseDto(recipe));
+    }
+
     [HttpPost("from-ai")]
     public async Task<ActionResult<RecipeResponseDto>> CreateRecipeFromAi([FromBody] CreateRecipeFromAiRequestDto dto)
     {
@@ -123,7 +171,6 @@ public class RecipesController : ControllerBase
             return NotFound($"Nie znaleziono przepisu o ID {id}.");
         }
 
-        // Odpinamy przepis od historycznych wpisów w dzienniku, żeby zachować historię kalorii
         var linkedMeals = await _context.MealLogs
             .Where(m => m.RecipeId == id)
             .ToListAsync();

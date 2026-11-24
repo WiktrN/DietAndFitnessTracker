@@ -8,4 +8,5 @@ public class NutritionGoal
     public double TargetCarbs { get; set; }
     public double TargetFat { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateOnly EffectiveFrom { get; set; } = DateOnly.FromDateTime(DateTime.UtcNow);
 }

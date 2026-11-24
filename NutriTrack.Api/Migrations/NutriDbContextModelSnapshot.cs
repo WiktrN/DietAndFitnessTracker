@@ -116,6 +116,10 @@ namespace NutriTrack.Api.Migrations
                     b.Property<DateTime>("Date")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("MealCategory")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("MealName")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -147,6 +151,9 @@ namespace NutriTrack.Api.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateOnly>("EffectiveFrom")
+                        .HasColumnType("TEXT");
 
                     b.Property<double>("TargetCalories")
                         .HasColumnType("REAL");
